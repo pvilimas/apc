@@ -24,3 +24,9 @@ bool parens_are_balanced(stringview sv) {
 
     return count == 0;
 }
+
+void signal_handler(int s) {
+    (void)s;
+    fputc('\n', stdout);
+    apc_exit(0);
+}

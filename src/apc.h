@@ -3,6 +3,7 @@
 
 #include "bignum.h"
 
+#include <signal.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -200,6 +201,8 @@ struct Expr {
 #define expr_new() \
     (calloc(1, sizeof(Expr)))
 
+void expr_print(const Expr* e);
+
 // runtime
 
 typedef struct {
@@ -269,5 +272,7 @@ bool char_in_string(char c, const char* str);
 
 // only handles () rn, []{} are ignored
 bool parens_are_balanced(stringview sv);
+
+void signal_handler(int s);
 
 #endif // APC_H

@@ -34,6 +34,7 @@ void apc_eval(const char* str) {
         get_next_token();
 
         Expr* e = consume_expr();
+        expr_print(e);
         Value final_result = eval_expr(e);
 
         // success, child prints result
@@ -64,7 +65,10 @@ void apc_start_repl() {
         ssize_t nread = getline(&line, &len, stdin);
 
         if (nread == -1 || line == NULL) {
-            continue; // ""
+            // Ctrl+D?
+
+            fputs("^D\n\n", stdout);
+            apc_exit(0);
         }
 
         if (line[nread - 1] == '\n') {
@@ -77,7 +81,7 @@ void apc_start_repl() {
         }
 
         if (!strncmp(line, "q", len) || !strncmp(line, "quit", len)) {
-            apc_exit(E_OK); // user exited repl (TODO handle ^C)
+            apc_exit(0); // user exited repl
         }
 
         apc_eval(line);
@@ -92,6 +96,8 @@ void apc_start_repl() {
 }
 
 void apc_init() {
+
+    signal(SIGINT, signal_handler);
 
     // init shared memory
     runtime.error_code = mmap(NULL, sizeof(ErrorCode),
@@ -179,6 +185,26 @@ BinopData* get_binop(char name) {
         }
     }
     return NULL;
+}
+
+void expr_print(const Expr* e) {
+    if (e->type == X_VALUE) {
+        fputs("Value{", stdout);
+        bn_print(&e->value.number);
+        fputc('}', stdout);
+    } else if (e->type == X_UNOP) {
+        printf("Unop{%c, ", e->unop.data->name);
+        expr_print(e->unop.arg);
+        fputc('}', stdout);
+    } else if (e->type == X_BINOP) {
+        printf("Binop{%c, ", e->binop.data->name);
+        expr_print(e->binop.arg0);
+        fputs(", ", stdout);
+        expr_print(e->binop.arg1);
+        fputc('}', stdout);
+    } else {
+        printf("Expr{???}");
+    }
 }
 
 // returns false if unable to get next token
@@ -273,38 +299,56 @@ void expect_token(TokenType ttype) {
 }
 
 Expr* consume_expr() {
+printf("%d: start\n", __LINE__);
     Expr* term;
 
     Token op;
+
     if (runtime.current_token.type == T_PLUS
     || runtime.current_token.type == T_MINUS) {
         // unop
         op = runtime.current_token;
+printf("%d: start unop %c\n", __LINE__, op.atom.str[0]);
         if (!get_next_token()) {
             apc_return(E_PARSE_ERROR);
         }
         term = consume_expr();
+        printf("%d: ", __LINE__);
+        expr_print(term);
+        fputc('\n', stdout);
         term = build_expr_unop(op, term);
+printf("%d: ", __LINE__);
+expr_print(term);
+fputc('\n', stdout);
     } else {
         term = consume_term();
+printf("%d: ", __LINE__);
+expr_print(term);
+fputc('\n', stdout);
     }
 
     while (runtime.current_token.type == T_PLUS
-    || runtime.current_token.type == T_MINUS
-    || runtime.current_token.type == T_STAR) {
+    || runtime.current_token.type == T_MINUS) {
         // binop
         op = runtime.current_token;
         if (!get_next_token()) {
             apc_return(E_PARSE_ERROR);
         }
         Expr* term_n = consume_expr();
+printf("%d: ", __LINE__);
+expr_print(term_n);
+fputc('\n', stdout);
         term = build_expr_binop(op, term, term_n);
+printf("%d: ", __LINE__);
+expr_print(term);
+fputc('\n', stdout);
     }
 
+printf("%d: return ", __LINE__);
+expr_print(term);
+fputc('\n', stdout);
     return term;
 }
-
-
 
 Expr* consume_term() {
     Expr* term = consume_factor();
