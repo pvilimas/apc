@@ -21,36 +21,74 @@ def test_apc(test_input: str) -> str:
         text=True)
 
     output = result.stdout[3:] # remove leading " = "
-    # print(f'test_apc("{test_input}") => {output}')
     return output
 
-def run_test_add():
-    total = 0
+def random_expr() -> str:
+    r1 = randint(0, 5)
+    if r1 <= 2:
+        # X_VALUE, V_NUMBER
+
+        # number of digits
+        r2 = randint(1, 25)
+
+        # 1000000000...
+        s = '1' + ''.join(['0' * (r2 - 1)])
+        nd = int(s)
+
+        # signbit
+        r3 = randint(0, 1)
+
+        if r3 == 0:
+            x = randint(0, nd)
+            return str(x)
+        else:
+            x = randint(-nd, 0)
+            return str(x)
+    elif r1 == 3:
+        # X_UNOP
+
+        # operation
+        r2 = randint(0, 1)
+        if r2 == 0:
+            return f"+({random_expr()})"
+        elif r2 == 1:
+            return f"-({random_expr()})"
+    elif r1 >= 4:
+        # X_BINOP
+
+        # operation
+        r2 = randint(0, 2)
+        if r2 == 0:
+            return f"({random_expr()}) + ({random_expr()})"
+        elif r2 == 1:
+            return f"({random_expr()}) - ({random_expr()})"
+        elif r2 == 2:
+            return f"({random_expr()}) * ({random_expr()})"
+
+
+def run_test():
     passed = 0
 
     for i in range(N):
-        for j in range(N):
-            x = i + randint(-10000000000000, 100000000000000)
-            y = j + randint(-10000000000000, 100000000000000)
-            py_answer = x + y
-            apc_answer = eval(test_apc(f"{x} + {y}"))
+        e = random_expr()
 
-            total += 1
-            if py_answer == apc_answer:
-                passed += 1
-                # print(f"     {x}\n"
-                #       f"+    {y}\n"
-                #       f"==   {apc_answer}\n")
-            else:
-                print(f"     {x}\n"
-                      f"+    {y}\n"
-                      f"!=   {apc_answer}\n"
-                      f"==   {py_answer}\n")
+        py_answer = eval(e)
+        apc_answer = test_apc(e)
+        if apc_answer[-1] == '\n':
+            apc_answer = apc_answer[:-1]
 
-    print(f"test_add: passed {passed} / {total}")
+
+        if str(py_answer) == apc_answer:
+            passed += 1
+        else:
+            print(f"\"{e}\":\n"
+                f"py: \"{py_answer}\"\n"
+                f"apc: \"{apc_answer}\"\n")
+
+    print(f"passed {passed} / {N}")
 
 def main():
-    run_test_add()
+    run_test()
 
 if __name__ == '__main__':
     main()

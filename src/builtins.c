@@ -28,9 +28,17 @@ Value BinopFn_Add(Value a0, Value a1) {
     }
 
     Value result = { .type = V_NUMBER };
-    bn_add(&result.number,
+    bn_iadd(&result.number,
            &a0.number,
            &a1.number);
+
+    printf("\nbn_add: ");
+    bn_print(&a0.number);
+    printf(" + ");
+    bn_print(&a1.number);
+    printf(" = ");
+    bn_print(&result.number);
+    printf("\n");
 
     return result;
 }

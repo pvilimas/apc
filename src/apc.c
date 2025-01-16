@@ -1,99 +1,6 @@
 #include "apc.h"
 
-Runtime runtime;
-
-/*
-    bugs:
-
-    -3 + 5 returns result of -3 - 5
-    (+3 - 5 is correct, (-3) + 5 is correct)
-*/
-
-void apc_eval(const char* str) {
-
-    int pid = fork();
-    if (pid == 0) {
-        // child
-
-        // step 0
-        runtime.current_input = sv_from(str);
-
-        if (!parens_are_balanced(runtime.current_input)) {
-            apc_return(E_PARSE_ERROR);
-        }
-
-        // "" => parse error
-        // this will never trigger in the repl, only from argv
-        if (runtime.current_input.len == 0) {
-            apc_return(E_PARSE_ERROR);
-        }
-
-        runtime.last_index = 0;
-
-        // call once to init
-        get_next_token();
-
-        Expr* e = consume_expr();
-        expr_print(e);
-        Value final_result = eval_expr(e);
-
-        // success, child prints result
-
-        fputs(" = ", stdout);
-        bn_print(&final_result.number);
-
-        // all done
-
-        apc_return(E_OK);
-
-    } else if (pid > 0) {
-        // parent
-        wait(NULL);
-        apc_print_result();
-    } else {
-        // fork failed
-        fputs(" = process error\n", stdout);
-        exit(1);
-    }
-}
-
-void apc_start_repl() {
-    char* line = NULL;
-    size_t len = 0;
-    while (1) {
-        fputs(" = ", stdout);
-        ssize_t nread = getline(&line, &len, stdin);
-
-        if (nread == -1 || line == NULL) {
-            // Ctrl+D?
-
-            fputs("^D\n\n", stdout);
-            apc_exit(0);
-        }
-
-        if (line[nread - 1] == '\n') {
-            line[nread - 1] = '\0';
-            nread -= 1;
-        }
-
-        if (nread == 0) {
-            continue; // ""
-        }
-
-        if (!strncmp(line, "q", len) || !strncmp(line, "quit", len)) {
-            apc_exit(0); // user exited repl
-        }
-
-        apc_eval(line);
-
-        // exit on "bad" error types
-        if (*runtime.error_code >= E_BAD_ERROR_LEVEL) {
-            apc_exit(*runtime.error_code);
-        }
-    }
-
-    apc_exit(E_INTERNAL_ERROR); // how did we get here
-}
+Runtime runtime = {0};
 
 void apc_init() {
 
@@ -104,6 +11,7 @@ void apc_init() {
         PROT_READ | PROT_WRITE,
         MAP_SHARED | MAP_ANON,
         -1, 0);
+
     if (runtime.error_code == MAP_FAILED) {
         fputs(" = memory error\n", stdout);
         exit(E_MEMORY_ERROR);
@@ -119,39 +27,118 @@ void apc_init() {
     runtime.binop_data[0] = (BinopData){'+', BinopFn_Add};
     runtime.binop_data[1] = (BinopData){'-', BinopFn_Sub};
     runtime.binop_data[2] = (BinopData){'*', BinopFn_Mul};
+}
 
+void apc_exit(int exit_code) {
+    munmap(runtime.error_code, sizeof(ErrorCode));
+    exit(exit_code);
+}
+
+void apc_eval(const char* str) {
+
+    int pid = fork();
+    if (pid == 0) {
+        // child
+
+        runtime.current_input = sv_from(str);
+
+        if (!parens_are_balanced(runtime.current_input)) {
+            apc_return(E_PARSE_ERROR);
+        }
+
+        // "" => parse error
+        // this will never trigger in the repl, only from argv
+        if (runtime.current_input.len == 0) {
+            apc_return(E_PARSE_ERROR);
+        }
+
+        // init
+        runtime.last_index = 0;
+        get_next_token();
+
+        // parse
+        Expr* e = consume_expr();
+
+        // expr_print(e);
+
+        // eval
+        Value final_result = eval_expr(e);
+
+        // print result
+        if (*runtime.error_code == E_OK) {
+            fputs(" = ", stdout);
+            bn_print(&final_result.number);
+        } else if (*runtime.error_code == E_NAME_ERROR) {
+            fputs(" = name error", stdout);
+        } else if (*runtime.error_code == E_VALUE_ERROR) {
+            fputs(" = value error", stdout);
+        } else if (*runtime.error_code == E_PARSE_ERROR) {
+            fputs(" = syntax error", stdout);
+        } else if (*runtime.error_code == E_MEMORY_ERROR) {
+            fputs(" = memory error", stdout);
+        } else if (*runtime.error_code == E_PROCESS_ERROR) {
+            fputs(" = process error", stdout);
+        } else if (*runtime.error_code == E_INTERNAL_ERROR) {
+            fputs(" = internal error", stdout);
+        } else {
+            fputs(" = internal error", stdout);
+        }
+        fputc('\n', stdout);
+
+        // done
+        apc_return(E_OK);
+
+    } else if (pid > 0) {
+        // parent
+        wait(NULL);
+    } else {
+        // fork failed
+        *runtime.error_code = E_PROCESS_ERROR;
+        fputs(" = process error", stdout);
+        apc_exit(E_PROCESS_ERROR);
+    }
+}
+
+void apc_start_repl() {
+    char* line = NULL;
+    size_t len = 0;
+    while (1) {
+        fputs(" = ", stdout);
+        ssize_t nread = getline(&line, &len, stdin);
+
+        if (nread == -1 || line == NULL) {
+            // used pressed Ctrl+D
+            fputs("^D\n\n", stdout);
+            apc_exit(E_OK);
+        }
+
+        if (line[nread - 1] == '\n') {
+            line[nread - 1] = '\0';
+            nread -= 1;
+        }
+
+        if (nread == 0) {
+            continue; // ""
+        }
+
+        if (!strncmp(line, "q", len) || !strncmp(line, "quit", len)) {
+            apc_exit(E_OK); // user exited repl
+        }
+
+        apc_eval(line);
+
+        // exit on "bad" error types
+        if (*runtime.error_code >= E_BAD_ERROR_LEVEL) {
+            apc_exit(*runtime.error_code);
+        }
+    }
+
+    apc_exit(E_INTERNAL_ERROR); // how did we get here
 }
 
 // write error code to shared memory and exit
 void apc_return(ErrorCode exit_code) {
     *runtime.error_code = exit_code;
-    exit(exit_code);
-}
-
-void apc_print_result() {
-    if (*runtime.error_code == E_OK) {
-        // do nothing, child already printed the result
-    } else if (*runtime.error_code == E_NAME_ERROR) {
-        fputs(" = name error", stdout);
-    } else if (*runtime.error_code == E_VALUE_ERROR) {
-        fputs(" = value error", stdout);
-    } else if (*runtime.error_code == E_PARSE_ERROR) {
-        fputs(" = parse error", stdout);
-    } else if (*runtime.error_code == E_MEMORY_ERROR) {
-        fputs(" = memory error", stdout);
-    } else if (*runtime.error_code == E_PROCESS_ERROR) {
-        fputs(" = process error", stdout);
-    } else if (*runtime.error_code == E_INTERNAL_ERROR) {
-        fputs(" = internal error", stdout);
-    } else {
-        fputs(" = ???", stdout);
-    }
-    fputc('\n', stdout);
-}
-
-// unmap shared memory and exit
-void apc_exit(int exit_code) {
-    munmap(runtime.error_code, sizeof(ErrorCode));
     exit(exit_code);
 }
 
@@ -299,7 +286,6 @@ void expect_token(TokenType ttype) {
 }
 
 Expr* consume_expr() {
-printf("%d: start\n", __LINE__);
     Expr* term;
 
     Token op;
@@ -308,23 +294,13 @@ printf("%d: start\n", __LINE__);
     || runtime.current_token.type == T_MINUS) {
         // unop
         op = runtime.current_token;
-printf("%d: start unop %c\n", __LINE__, op.atom.str[0]);
         if (!get_next_token()) {
             apc_return(E_PARSE_ERROR);
         }
-        term = consume_expr();
-        printf("%d: ", __LINE__);
-        expr_print(term);
-        fputc('\n', stdout);
+        term = consume_term();
         term = build_expr_unop(op, term);
-printf("%d: ", __LINE__);
-expr_print(term);
-fputc('\n', stdout);
     } else {
         term = consume_term();
-printf("%d: ", __LINE__);
-expr_print(term);
-fputc('\n', stdout);
     }
 
     while (runtime.current_token.type == T_PLUS
@@ -335,18 +311,9 @@ fputc('\n', stdout);
             apc_return(E_PARSE_ERROR);
         }
         Expr* term_n = consume_expr();
-printf("%d: ", __LINE__);
-expr_print(term_n);
-fputc('\n', stdout);
         term = build_expr_binop(op, term, term_n);
-printf("%d: ", __LINE__);
-expr_print(term);
-fputc('\n', stdout);
     }
 
-printf("%d: return ", __LINE__);
-expr_print(term);
-fputc('\n', stdout);
     return term;
 }
 
@@ -413,7 +380,7 @@ Value eval_expr(const Expr* e) {
         Value v0 = eval_expr(e->unop.arg);
         Value v = e->unop.data->fn(v0);
         return v;
-    } if (e->type == X_BINOP) {
+    } else if (e->type == X_BINOP) {
         Value v0 = eval_expr(e->binop.arg0);
         Value v1 = eval_expr(e->binop.arg1);
         Value v = e->binop.data->fn(v0, v1);
@@ -421,5 +388,6 @@ Value eval_expr(const Expr* e) {
     }
 
     apc_return(E_INTERNAL_ERROR);
+    // unreachable
     return (Value){0};
 }

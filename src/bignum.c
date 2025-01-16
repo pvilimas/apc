@@ -13,7 +13,9 @@ bool bn_write(Bignum* b, const char* str) {
 bool bn_write2(Bignum* b, const char* str, size_t len) {
     char* s2 = strndup(str, len);
     bool ok = bn_write(b, s2);
+#ifndef BN_NOFREE
     BN_FREE_FN(s2);
+#endif
     return ok;
 }
 
@@ -41,6 +43,8 @@ int bn_print(const Bignum* b) {
     // print leading digit without leading 0s
     printf("%lu%n", (unsigned long) *b->start, &n);
     nc += n;
+
+    // does it only have 1 digit?
     if (b->start == b->digits_end) {
         return nc;
     }
@@ -52,6 +56,46 @@ int bn_print(const Bignum* b) {
     }
 
     return nc;
+}
+
+// return a standard-representation of a bignum as a string
+char* bn_to_str(const Bignum* b) {
+    if (b->digits_end == NULL) {
+        return bn_strndup("(null)", 6);
+    }
+
+    if (bn_is_zero(b)) {
+        return bn_strndup("0", 1);
+    }
+
+    char* str;
+    size_t len = 0;
+
+    // append leading digit without leading 0s
+    size_t len_ld = snprintf(NULL, 0, "%s%lu",
+        b->sign ? "-" : "",
+        (unsigned long) *b->start);
+    str = BN_MALLOC_FN((len_ld+1) * sizeof(char));
+    memset(str, '\0', len_ld+1);
+    snprintf(str, len_ld+1, "%s%lu",
+        b->sign ? "-" : "",
+        (unsigned long) *b->start);
+    len += len_ld;
+
+    // does it only have 1 digit?
+    if (b->start == b->digits_end) {
+        return str;
+    }
+
+    // append remaining digits, zero-padded to 9 decimal places
+    for (const uint32_t* d = b->start - 1; d >= b->digits_end; d--) {
+        size_t len_d = snprintf(NULL, 0, "%09lu", (unsigned long) *d);
+        str = realloc(str, (len+len_d+1) * sizeof(char));
+        snprintf(str + len, len_d+1, "%09lu", (unsigned long) *d);
+        len += len_d;
+    }
+
+    return str;
 }
 
 // print all digits in memory order (debug print)
@@ -277,7 +321,7 @@ void bn_icopy(Bignum* dest, const Bignum* src) {
 void bn_ifree(Bignum* out) {
 #ifndef BN_NOFREE
     BN_FREE_FN(out->digits_end);
-#endif // BN_NOFREE
+#endif
     *out = (Bignum){0};
 }
 
@@ -647,7 +691,9 @@ bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t* out)
 
     char* b_end = NULL;
     unsigned long ul = strtoul(b, &b_end, 10);
+#ifndef BN_NOFREE
     BN_FREE_FN(b);
+#endif
 
     if (b_end == NULL) {
         return false;

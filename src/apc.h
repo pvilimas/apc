@@ -1,6 +1,7 @@
 #ifndef APC_H
 #define APC_H
 
+#define BN_NOFREE
 #include "bignum.h"
 
 #include <signal.h>
@@ -27,29 +28,27 @@ typedef enum {
 
 } ErrorCode;
 
-// run once to parse argv[1] or a line from stdin
+// initialize apc
+void apc_init();
+
+// exit the program with exit code 0 or 1
+void apc_exit(int exit_code);
+
+// evaluate the string and print the result
 void apc_eval(const char* str);
 
-// start repl from stdin+stdout
+// start repl mode ("q" to exit)
 void apc_start_repl();
 
 // apc uses two separate processes:
-// parser process - start child, wait, print result, repeat in repl mode
-// child process - do all the work, write error code, exit
-
-// init shared memory, set up parser
-void apc_init();
+// main process - start child, wait, print result, repeat in repl mode
+// child process - parse and evaluate expr, write error code, exit
 
 // write error code to shared memory, exit from child proc with exit_code
 void apc_return(ErrorCode exit_code);
 
-// print result of child process from shared memory
-void apc_print_result();
-
 // unmap shared memory, exit from main proc with exit_code
 void apc_exit(int exit_code);
-
-// internal
 
 #define DEBUG_PRINT 1
 #define BREAKPOINT()                \

@@ -18,9 +18,7 @@
 // currently supports:
 // positive and negative integers
 // comparing numbers
-// addition
-// subtraction
-// multiplication
+// + - *
 
 typedef struct {
     uint32_t* digits_end; // pointer to start of buffer/last digit (LSD)
@@ -88,6 +86,9 @@ bool bn_write2(Bignum* b, const char* str, size_t len);
 // print a standard-representation of a bignum to the console
 // returns # of characters written
 int bn_print(const Bignum* b);
+
+// write a standard-representation of a bignum to a string
+char* bn_to_str(const Bignum* b);
 
 // debug print to the console
 void bn_dump(const Bignum* b);
