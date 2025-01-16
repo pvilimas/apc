@@ -34,6 +34,8 @@ void apc_exit(int exit_code) {
     exit(exit_code);
 }
 
+// writes errorcode to shared memory
+// prints result to console
 void apc_eval(const char* str) {
 
     int pid = fork();

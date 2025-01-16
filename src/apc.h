@@ -9,7 +9,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// apc.h - arbitrary-precision calculator
+// apc.h - arbitrary-precision calculator shell command
 
 typedef enum {
 
