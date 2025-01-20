@@ -11,6 +11,14 @@
 
 // apc.h - arbitrary-precision calculator shell command
 
+/*
+
+"(-159187157457) + (-826919235637165095)":
+py: "-826919394824322552"
+apc: "826919394824322552"
+
+*/
+
 typedef enum {
 
     // normal result - print and continue
@@ -238,9 +246,16 @@ bool accept_token(TokenType ttype);
 // exit with E_PARSE_ERROR if not matched
 void expect_token(TokenType ttype);
 
-// parse a full expression
-Expr* consume_expr();
+/*
 
+numlit => \d+
+factor => numlit | "(" expr ")"
+term => factor | factor "*" factor
+expr => term | "+" term | "-" term | term "+" term | term "-" term
+
+*/
+
+Expr* consume_expr();
 Expr* consume_term();
 Expr* consume_factor();
 

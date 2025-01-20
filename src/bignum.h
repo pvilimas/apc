@@ -27,12 +27,12 @@ typedef struct {
     uint64_t sign; // 1 means negative
 } Bignum;
 
-// each digit is base 10^9 (the largest power of 10 that fits in a u32)
+// each digit is base 10^9 (largest power of 10 that fits in a u32)
 #define BN_BASE         1000000000
 #define BN_DIGIT_MAX     999999999
 
 // if this is defined, the library will not free any memory
-// apc.h uses this - all memory is freed when process exits
+// apc.h uses this - all memory is freed on subprocess exit
 #define BN_NOFREE
 
 // optional custom memory functions
@@ -83,6 +83,9 @@ bool bn_write(Bignum* b, const char* str);
 // write a string with explicit length or return false for parse error
 bool bn_write2(Bignum* b, const char* str, size_t len);
 
+// write a copy of src into dest
+void bn_copy(Bignum* dest, const Bignum* src);
+
 // print a standard-representation of a bignum to the console
 // returns # of characters written
 int bn_print(const Bignum* b);
@@ -105,6 +108,9 @@ bool bn_is_zero(const Bignum* a0);
 
 // operations
 
+// result = -a0
+void bn_neg(Bignum* result, const Bignum* a0);
+
 // result = a0 + a1
 void bn_add(Bignum* result, const Bignum* a0, const Bignum* a1);
 
@@ -115,6 +121,10 @@ void bn_sub(Bignum* result, const Bignum* a0, const Bignum* a1);
 void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1);
 
 // internal
+
+// get the real length of the bignum, ignoring leading zeroes
+#define bn_rlen(b) \
+    (1 + (b)->start - (b)->digits_end)
 
 // allocate space for n_digits, zeroed out
 void bn_ialloc(Bignum* out, uint64_t n_digits);
@@ -131,7 +141,7 @@ void bn_inormalize(Bignum* out);
 // write a string value to a bignum
 bool bn_iwrite_str(Bignum* out, const char* str);
 
-// write a signbit and a value to a bignum (sign is 0 => positive, 1 => negative)
+// write a signbit+value to a bignum (sign == 0 => positive, 1 => negative)
 void bn_iwrite_parts(Bignum* out, uint32_t sign, uint32_t value);
 
 // out = a0 << n (in base BN_BASE)
@@ -143,6 +153,10 @@ void bn_ilshift(Bignum* out, const Bignum* a0, uint64_t n);
 // assumes n > 0
 // preserves sign of a0
 void bn_irshift(Bignum* out, const Bignum* a0, uint64_t n);
+
+// out = -a0
+// assumes a0 != 0
+void bn_ineg(Bignum* out, const Bignum* a0);
 
 // out = a0 + a1
 // assumes a0, a1 > 0
@@ -161,7 +175,7 @@ void bn_imul(Bignum* out, const Bignum* a0, const Bignum* a1);
 int bn_min(int x, int y);
 int bn_max(int x, int y);
 
-// parse u32 from a slice of a string and allocate it, return false for parse error
+// parse u32 from a string slice or return false for parse error
 bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t* out);
 
 char* bn_strndup(const char* str, int n);

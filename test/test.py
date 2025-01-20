@@ -6,7 +6,7 @@ import sys
 from random import randint
 import subprocess
 
-N = 100
+N = 1000
 
 def run_command(command):
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -20,8 +20,7 @@ def test_apc(test_input: str) -> str:
         capture_output=True,
         text=True)
 
-    output = result.stdout[3:] # remove leading " = "
-    return output
+    return result.stdout.strip('\n =')
 
 def random_expr() -> str:
     r1 = randint(0, 5)

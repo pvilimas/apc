@@ -62,6 +62,7 @@ void apc_eval(const char* str) {
         Expr* e = consume_expr();
 
         // expr_print(e);
+        // printf("\n");
 
         // eval
         Value final_result = eval_expr(e);
@@ -323,10 +324,16 @@ Expr* consume_term() {
     Expr* term = consume_factor();
     Expr* factor_n;
     Token op;
+
     while (runtime.current_token.type == T_STAR) {
         op = runtime.current_token;
-        get_next_token();
+        if (!get_next_token()) {
+            apc_return(E_PARSE_ERROR);
+        }
         factor_n = consume_factor();
+
+        // left associative
+        // 5 + 6 - 7 => -(+(5,6), 7)
         term = build_expr_binop(op, term, factor_n);
     }
     return term;

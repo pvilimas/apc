@@ -19,6 +19,11 @@ bool bn_write2(Bignum* b, const char* str, size_t len) {
     return ok;
 }
 
+// write a copy of src into dest
+void bn_copy(Bignum* dest, const Bignum* src) {
+    bn_icopy(dest, src);
+}
+
 // print a standard-representation of a bignum to the console
 // returns # of characters written
 int bn_print(const Bignum* b) {
@@ -100,9 +105,9 @@ char* bn_to_str(const Bignum* b) {
 
 // print all digits in memory order (debug print)
 void bn_dump(const Bignum* b) {
-    fputs("Bignum<", stdout);
+    fputs("Bignum<num=", stdout);
     bn_print(b);
-    fputs(">{\n", stdout);
+    printf(", len=%lu, rlen=%lu>{\n", b->len, bn_rlen(b));
     for (uint64_t i = 0; i < b->len; i++) {
         printf("      [%09llu]\n", (unsigned long long) b->digits_end[i]);
     }
@@ -127,8 +132,8 @@ int bn_cmp(const Bignum* a0, const Bignum* a1) {
     int sign = a0->sign ? -1 : 1;
 
     // compare lengths, accounting for where start is not just b->len
-    uint64_t len0 = a0->start - a0->digits_end;
-    uint64_t len1 = a1->start - a1->digits_end;
+    uint64_t len0 = bn_rlen(a0);
+    uint64_t len1 = bn_rlen(a1);
     if (len0 > len1) {
         return sign * 1;
     } else if (len0 < len1) {
@@ -153,6 +158,20 @@ bool bn_is_zero(const Bignum* a0) {
 }
 
 // operations
+
+void bn_neg(Bignum* result, const Bignum* a0) {
+
+    Bignum arg0 = *a0;
+
+    // -0 = 0
+    if (bn_is_zero(&arg0)) {
+        bn_icopy(result, &arg0);
+        return;
+    }
+
+    // -a0
+    bn_ineg(result, &arg0);
+}
 
 void bn_add(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
@@ -304,6 +323,7 @@ void bn_ialloc(Bignum* out, uint64_t n_digits) {
     out->start = out->digits_end;
 }
 
+// create a deep copy of src in dest
 void bn_icopy(Bignum* dest, const Bignum* src) {
     Bignum result = {
         .digits_end = BN_MALLOC_FN(src->len * sizeof(uint32_t)),
@@ -531,6 +551,17 @@ void bn_irshift(Bignum* out, const Bignum* a0, uint64_t n) {
     bn_inormalize(out);
 }
 
+// out = -a0
+// assumes a0 != 0
+void bn_ineg(Bignum* out, const Bignum* a0) {
+
+    Bignum result = {0};
+    bn_icopy(&result, a0);
+    result.sign = !result.sign;
+
+    *out = result;
+    bn_inormalize(out);
+}
 
 // out = a0 + a1
 // assumes a0, a1 > 0
@@ -540,14 +571,14 @@ void bn_iadd(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // swap the numbers such that a0->len >= a1->len
     // this makes computation simpler in the loop
     // also guarantees `max(len0, len1) == len0`
-    if (a0->len < a1->len) {
+    if (bn_rlen(a0) < bn_rlen(a1)) {
         const Bignum* temp = a0;
         a0 = a1;
         a1 = temp;
     }
 
-    int max_len = 1 + a0->len; // +1 for possible carry
     Bignum result = {0};
+    size_t max_len = 1 + bn_rlen(a0); // +1 for possible carry
     bn_ialloc(&result, max_len);
 
     // LSD -> MSD
@@ -642,7 +673,7 @@ void bn_isub(Bignum* out, const Bignum* a0, const Bignum* a1) {
 // assumes a0, a1 > 0
 void bn_imul(Bignum* out, const Bignum* a0, const Bignum* a1) {
     Bignum result = {0};
-    bn_ialloc(&result, (a0->start - a0->digits_end + 1) + (a1->start - a1->digits_end + 1));
+    bn_ialloc(&result, bn_rlen(a0) + 1 + bn_rlen(a1) + 1);
 
     uint32_t* r_ptr = result.digits_end;
 
