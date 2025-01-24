@@ -1,17 +1,17 @@
 #include "apc.h"
 
+// global instance
 Runtime runtime = {0};
 
 void apc_init() {
 
-    signal(SIGINT, signal_handler);
+    signal(SIGINT, ctrl_c_signal_handler);
 
     // init shared memory
     runtime.error_code = mmap(NULL, sizeof(ErrorCode),
         PROT_READ | PROT_WRITE,
         MAP_SHARED | MAP_ANON,
         -1, 0);
-
     if (runtime.error_code == MAP_FAILED) {
         fputs(" = memory error\n", stdout);
         exit(E_MEMORY_ERROR);
@@ -34,8 +34,6 @@ void apc_exit(int exit_code) {
     exit(exit_code);
 }
 
-// writes errorcode to shared memory
-// prints result to console
 void apc_eval(const char* str) {
 
     int pid = fork();
@@ -55,22 +53,43 @@ void apc_eval(const char* str) {
         }
 
         // init
+        runtime.tokens = NULL;
+        runtime.n_tokens = 0;
         runtime.last_index = 0;
-        get_next_token();
+        runtime.current_token = (Token){T_NONE};
+
+        // read all tokens into a list
+        while(scan_next_token()) {
+            runtime.n_tokens += 1;
+            runtime.tokens = realloc(runtime.tokens,
+                runtime.n_tokens * sizeof(Token));
+            runtime.tokens[runtime.n_tokens-1] = runtime.current_token;
+        }
 
         // parse
+        runtime.token_index = 0;
+        runtime.current_token = (Token){T_NONE};
+        parser_next_token();
+
         Expr* e = consume_expr();
 
-        // expr_print(e);
-        // printf("\n");
-
         // eval
+
         Value final_result = eval_expr(e);
 
-        // print result
+        *runtime.error_code = E_OK;
+        fputs(" = ", stdout);
+        bn_print(&final_result.number);
+
+        // done
+        apc_return(E_OK);
+
+    } else if (pid > 0) {
+        // parent
+        wait(NULL);
+
         if (*runtime.error_code == E_OK) {
-            fputs(" = ", stdout);
-            bn_print(&final_result.number);
+            // do nothing, child already printed result
         } else if (*runtime.error_code == E_NAME_ERROR) {
             fputs(" = name error", stdout);
         } else if (*runtime.error_code == E_VALUE_ERROR) {
@@ -87,13 +106,6 @@ void apc_eval(const char* str) {
             fputs(" = internal error", stdout);
         }
         fputc('\n', stdout);
-
-        // done
-        apc_return(E_OK);
-
-    } else if (pid > 0) {
-        // parent
-        wait(NULL);
     } else {
         // fork failed
         *runtime.error_code = E_PROCESS_ERROR;
@@ -103,9 +115,12 @@ void apc_eval(const char* str) {
 }
 
 void apc_start_repl() {
+
     char* line = NULL;
     size_t len = 0;
+
     while (1) {
+
         fputs(" = ", stdout);
         ssize_t nread = getline(&line, &len, stdin);
 
@@ -139,7 +154,6 @@ void apc_start_repl() {
     apc_exit(E_INTERNAL_ERROR); // how did we get here
 }
 
-// write error code to shared memory and exit
 void apc_return(ErrorCode exit_code) {
     *runtime.error_code = exit_code;
     exit(exit_code);
@@ -157,7 +171,6 @@ stringbuffer sb_copy(const stringbuffer* sb) {
     return sb2;
 }
 
-// returns null if name not found
 UnopData* get_unop(char name) {
     for (size_t i = 0; i < runtime.n_unops; i++) {
         if (name == runtime.unop_data[i].name) {
@@ -167,7 +180,6 @@ UnopData* get_unop(char name) {
     return NULL;
 }
 
-// returns null if name not found
 BinopData* get_binop(char name) {
     for (size_t i = 0; i < runtime.n_binops; i++) {
         if (name == runtime.binop_data[i].name) {
@@ -197,8 +209,7 @@ void expr_print(const Expr* e) {
     }
 }
 
-// returns false if unable to get next token
-bool get_next_token() {
+bool scan_next_token() {
     const char* s = runtime.current_input.str;
     size_t l = runtime.current_input.len;
 
@@ -272,66 +283,78 @@ bool get_next_token() {
     return true;
 }
 
-// returns true and gets next token if it matches the current one
-bool accept_token(TokenType ttype) {
+bool parser_next_token() {
+    if (runtime.token_index >= runtime.n_tokens) {
+        return false;
+    }
+
+    runtime.current_token = runtime.tokens[runtime.token_index];
+    runtime.token_index += 1;
+    return true;
+}
+
+bool parser_accept(TokenType ttype) {
     if (runtime.current_token.type == ttype) {
-        get_next_token();
+        parser_next_token();
         return true;
     }
     return false;
 }
 
-// exit if not matched
-void expect_token(TokenType ttype) {
-    if (!accept_token(ttype)) {
+void parser_expect(TokenType ttype) {
+    if (!parser_accept(ttype)) {
         apc_return(E_PARSE_ERROR);
     }
 }
 
-Expr* consume_expr() {
-    Expr* term;
-
-    Token op;
-
-    if (runtime.current_token.type == T_PLUS
-    || runtime.current_token.type == T_MINUS) {
-        // unop
-        op = runtime.current_token;
-        if (!get_next_token()) {
-            apc_return(E_PARSE_ERROR);
-        }
-        term = consume_term();
-        term = build_expr_unop(op, term);
-    } else {
-        term = consume_term();
+bool parser_lookahead(Token* out) {
+    if (runtime.token_index + 1 >= runtime.n_tokens) {
+        return false;
     }
 
-    while (runtime.current_token.type == T_PLUS
-    || runtime.current_token.type == T_MINUS) {
-        // binop
-        op = runtime.current_token;
-        if (!get_next_token()) {
-            apc_return(E_PARSE_ERROR);
-        }
-        Expr* term_n = consume_expr();
-        term = build_expr_binop(op, term, term_n);
+    *out = runtime.tokens[runtime.token_index + 1];
+    return true;
+}
+
+Expr* consume_factor() {
+
+    Expr* e;
+    Token t;
+
+    t = runtime.current_token;
+    if (parser_accept(T_PLUS) || parser_accept(T_MINUS)) {
+        e = consume_factor();
+        return build_expr_unop(t, e);
     }
 
-    return term;
+    if (parser_accept(T_NUMBER)) {
+        return build_expr_num(t);
+    } else if (parser_accept(T_OPEN)) {
+        e = consume_expr();
+        parser_expect(T_CLOSE);
+        return e;
+    }
+
+    apc_return(E_PARSE_ERROR);
+    // unreachable
+    return NULL;
 }
 
 Expr* consume_term() {
-    Expr* term = consume_factor();
+    Expr* term;
     Expr* factor_n;
     Token op;
 
+    term = consume_factor();
+
     while (runtime.current_token.type == T_STAR) {
         op = runtime.current_token;
-        if (!get_next_token()) {
+        if (!parser_next_token()) {
             apc_return(E_PARSE_ERROR);
         }
-        factor_n = consume_factor();
 
+        // term *= factor_n
+        factor_n = consume_factor();
         // left associative
         // 5 + 6 - 7 => -(+(5,6), 7)
         term = build_expr_binop(op, term, factor_n);
@@ -339,20 +362,24 @@ Expr* consume_term() {
     return term;
 }
 
-Expr* consume_factor() {
-    if (runtime.current_token.type == T_NUMBER) {
-        Expr* e = build_expr_num(runtime.current_token);
-        get_next_token();
-        return e;
-    } else if (accept_token(T_OPEN)) {
-        Expr* e = consume_expr();
-        expect_token(T_CLOSE);
-        return e;
-    }
+Expr* consume_expr() {
+    Expr* expr;
+    Expr* term_n;
+    Token op;
 
-    apc_return(E_PARSE_ERROR);
-    // unreachable
-    return NULL;
+    expr = consume_term();
+
+    while(runtime.current_token.type == T_PLUS
+    || runtime.current_token.type == T_MINUS) {
+        op = runtime.current_token;
+        if (!parser_next_token()) {
+            apc_return(E_PARSE_ERROR);
+        }
+
+        term_n = consume_term();
+        expr = build_expr_binop(op, expr, term_n);
+    }
+    return expr;
 }
 
 Expr* build_expr_num(Token num) {
@@ -400,3 +427,4 @@ Value eval_expr(const Expr* e) {
     // unreachable
     return (Value){0};
 }
+

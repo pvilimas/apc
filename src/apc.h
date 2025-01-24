@@ -11,14 +11,6 @@
 
 // apc.h - arbitrary-precision calculator shell command
 
-/*
-
-"(-159187157457) + (-826919235637165095)":
-py: "-826919394824322552"
-apc: "826919394824322552"
-
-*/
-
 typedef enum {
 
     // normal result - print and continue
@@ -118,20 +110,13 @@ stringbuffer sb_copy(const stringbuffer* sb);
 struct Value;
 
 typedef enum {
-    V_NUMBER,
-    V_LIST
+    V_NUMBER
 } ValueType;
-
-typedef struct {
-    struct Value* values;
-    size_t n_values;
-} List;
 
 typedef struct Value {
     ValueType type;
     union {
         Bignum number;
-        List list;
     };
 } Value;
 
@@ -217,18 +202,33 @@ typedef struct {
     // shared memory
     ErrorCode* error_code;
 
-    // list of unary operators, loaded at runtime
+    // runtime data
+
+    // list of unary operators
     UnopData* unop_data;
     size_t n_unops;
 
-    // list of binary operators, loaded at runtime
+    // list of binary operators
     BinopData* binop_data;
     size_t n_binops;
 
-    // used for parsing
-    Token current_token;
+    // parser state
+
+    // user input string currently being parsed
     stringview current_input;
+
+    // used for scan_next_token()
     size_t last_index;
+
+    // scan_next_token() and parser_next_token() write to this
+    Token current_token;
+
+    // list of tokens from the input string
+    Token* tokens;
+    size_t n_tokens;
+
+    // used for parser_next_token()
+    size_t token_index;
 
 } Runtime;
 extern Runtime runtime;
@@ -238,28 +238,52 @@ extern Runtime runtime;
 // reads from runtime.current_input
 // puts next token in runtime.current_token
 // returns false if no more tokens
-bool get_next_token();
+bool scan_next_token();
 
+// read from the list of tokens and "consume" one
+// increments runtime.token_index
+// puts next token in runtime.current_token
+// returns false if no more tokens
+bool parser_next_token();
+
+// optionally consumes a token
 // returns true and gets next token if it matches the current one
-bool accept_token(TokenType ttype);
+// if optional_out is not NULL, runtime.current_token is also copied there
+bool parser_accept(TokenType ttype);
 
-// exit with E_PARSE_ERROR if not matched
-void expect_token(TokenType ttype);
+// required, consumes a token
+// apc_return(E_PARSE_ERROR) if not matched
+// if optional_out is not NULL, runtime.current_token is also copied there
+void parser_expect(TokenType ttype);
+
+// does not consume a token
+// loads the token after the current one into out
+// returns false if not matched or the current one is the end
+bool parser_lookahead(Token* out);
 
 /*
 
 numlit => \d+
-factor => numlit | "(" expr ")"
-term => factor | factor "*" factor
-expr => term | "+" term | "-" term | term "+" term | term "-" term
+
+factor => numlit
+    | "+" factor
+    | "-" factor
+    | "(" expr ")"
+
+term => factor
+    | factor "*" factor
+
+expr => term
+    | term "+" term
+    | term "-" term
 
 */
 
-Expr* consume_expr();
-Expr* consume_term();
 Expr* consume_factor();
+Expr* consume_term();
+Expr* consume_expr();
 
-// these do not consume any tokens
+// these constructors never fail or consume any tokens
 
 Expr* build_expr_num(Token num);
 Expr* build_expr_unop(Token op, Expr* arg);
@@ -287,6 +311,6 @@ bool char_in_string(char c, const char* str);
 // only handles () rn, []{} are ignored
 bool parens_are_balanced(stringview sv);
 
-void signal_handler(int s);
+void ctrl_c_signal_handler(int s);
 
 #endif // APC_H

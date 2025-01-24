@@ -33,7 +33,7 @@ typedef struct {
 
 // if this is defined, the library will not free any memory
 // apc.h uses this - all memory is freed on subprocess exit
-#define BN_NOFREE
+// #define BN_NOFREE
 
 // optional custom memory functions
 #ifndef BN_MALLOC_FN

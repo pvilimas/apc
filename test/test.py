@@ -5,6 +5,7 @@ from io import StringIO
 import sys
 from random import randint
 import subprocess
+from dataclasses import dataclass
 
 N = 1000
 
@@ -20,9 +21,15 @@ def test_apc(test_input: str) -> str:
         capture_output=True,
         text=True)
 
-    return result.stdout.strip('\n =')
+    lines = result.stdout.split('\n')
+    return lines[-2].strip('\n =')
 
-def random_expr() -> str:
+@dataclass
+class Expr:
+    py_expr: str
+    apc_expr: str
+
+def random_expr() -> Expr:
     r1 = randint(0, 5)
     if r1 <= 2:
         # X_VALUE, V_NUMBER
@@ -39,55 +46,74 @@ def random_expr() -> str:
 
         if r3 == 0:
             x = randint(0, nd)
-            return str(x)
         else:
             x = randint(-nd, 0)
-            return str(x)
+
+        return Expr(str(x), str(x))
     elif r1 == 3:
         # X_UNOP
 
         # operation
         r2 = randint(0, 1)
-        if r2 == 0:
-            return f"+({random_expr()})"
-        elif r2 == 1:
-            return f"-({random_expr()})"
+        re0 = random_expr()
+
+        op = "+-"[r2]
+        e = Expr(f"{re0.py_expr}", f"{re0.apc_expr}")
+
+        # explicit parens
+        r3 = randint(0, 1)
+        if r3:
+            e = Expr(f"({e.py_expr})", f"({e.apc_expr})")
+        e = Expr(f"{op}{e.py_expr}", f"{op}{e.apc_expr}")
+        return e
+
     elif r1 >= 4:
         # X_BINOP
 
         # operation
         r2 = randint(0, 2)
+        re0 = random_expr()
+        re1 = random_expr()
         if r2 == 0:
-            return f"({random_expr()}) + ({random_expr()})"
+            return Expr(f"{re0.py_expr} + {re1.py_expr}", f"{re0.apc_expr} + {re1.apc_expr}")
         elif r2 == 1:
-            return f"({random_expr()}) - ({random_expr()})"
+            return Expr(f"{re0.py_expr} - {re1.py_expr}", f"{re0.apc_expr} - {re1.apc_expr}")
         elif r2 == 2:
-            return f"({random_expr()}) * ({random_expr()})"
 
+            # multiplication form
+            r3 = randint(0, 3)
 
-def run_test():
+            # TODO
+            r3 = 3
+
+            return Expr(
+                f"{re0.py_expr} * {re1.py_expr}",
+                    [f"{re0.apc_expr}({re1.apc_expr})",
+                    f"({re0.apc_expr})({re1.apc_expr})",
+                    f"({re0.apc_expr}){re1.apc_expr}",
+                    f"{re0.apc_expr} * {re1.apc_expr}"][r3])
+
+def run_test_apc():
     passed = 0
 
     for i in range(N):
         e = random_expr()
 
-        py_answer = eval(e)
-        apc_answer = test_apc(e)
-        if apc_answer[-1] == '\n':
-            apc_answer = apc_answer[:-1]
+        py_answer = str(eval(e.py_expr))
+        apc_answer = test_apc(e.apc_expr)
+        apc_answer = apc_answer.strip('\n')
 
-
-        if str(py_answer) == apc_answer:
+        if py_answer == apc_answer:
             passed += 1
         else:
-            print(f"\"{e}\":\n"
-                f"py: \"{py_answer}\"\n"
-                f"apc: \"{apc_answer}\"\n")
+            print(f"{e.apc_expr=}\n"
+                f"{py_answer=}\n"
+                f"{apc_answer=}\n")
 
     print(f"passed {passed} / {N}")
 
 def main():
-    run_test()
+    run_test_apc()
 
 if __name__ == '__main__':
     main()

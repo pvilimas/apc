@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
 
     if (argc == 2) {
         apc_eval(argv[1]);
-        apc_exit(0);
+        apc_exit(E_OK);
     } else {
         apc_start_repl();
     }
