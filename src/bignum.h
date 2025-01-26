@@ -101,12 +101,12 @@ bool bn_write2(Bignum* b, const char* str, size_t len, uint32_t base);
 // write a copy of src into dest
 void bn_copy(Bignum* dest, const Bignum* src);
 
-// TODO write src to dest in base new_base
+// TODO copy src to dest, in base new_base
 void bn_convert_base(Bignum* dest, const Bignum* src, uint32_t new_base);
 
 // print a standard-representation of a bignum to the console
 // returns # of characters written
-uint32_t bn_print(const Bignum* b);
+uint32_t bn_print(const Bignum* b, bool print_base);
 
 // print all struct fields and allocated digits in memory order (debug print)
 void bn_dump(const Bignum* b);

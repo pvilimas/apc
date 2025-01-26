@@ -77,11 +77,14 @@ void apc_eval(const char* str) {
 
         Value final_result = eval_expr(e);
 
-        *runtime.error_code = E_OK;
         fputs(" = ", stdout);
-        bn_print(&final_result.number);
+
+        // only print explicit base if not base10
+        bn_print(&final_result.number,
+            final_result.number.base != 10);
 
         // done
+        *runtime.error_code = E_OK;
         apc_return(E_OK);
 
     } else if (pid > 0) {
@@ -109,7 +112,7 @@ void apc_eval(const char* str) {
     } else {
         // fork failed
         *runtime.error_code = E_PROCESS_ERROR;
-        fputs(" = process error", stdout);
+        fputs(" = process error\n", stdout);
         apc_exit(E_PROCESS_ERROR);
     }
 }
@@ -192,7 +195,7 @@ BinopData* get_binop(char name) {
 void expr_print(const Expr* e) {
     if (e->type == X_VALUE) {
         fputs("Value{", stdout);
-        bn_print(&e->value.number);
+        bn_print(&e->value.number, true);
         fputc('}', stdout);
     } else if (e->type == X_UNOP) {
         printf("Unop{%c, ", e->unop.data->name);
@@ -241,6 +244,7 @@ bool scan_next_token() {
     if (c == ',') t.type = T_COMMA;
     else if (c == '(') t.type = T_OPEN;
     else if (c == ')') t.type = T_CLOSE;
+    else if (c == '_') t.type = T_BASE;
     else if (c == '+') t.type = T_PLUS;
     else if (c == '-') t.type = T_MINUS;
     else if (c == '*') t.type = T_STAR;
@@ -254,16 +258,15 @@ bool scan_next_token() {
 
     // consume a whole word, stopping at first space or operator
 
+    // TODO
     // starts as a number but switches to T_IDENT if any char isalpha()
     t.type = T_NUMBER;
 
     while (runtime.last_index < l) {
         c = s[runtime.last_index];
 
-        if (char_in_string(c, ",()+-*") || isspace(c)) {
+        if (char_in_string(c, ",()_+-*") || isspace(c)) {
             break;
-        } else if (isalpha(c)) {
-            t.type = T_IDENT;
         } else if (!isalnum(c)) {
             apc_return(E_PARSE_ERROR);
         }
@@ -316,20 +319,51 @@ bool parser_lookahead(Token* out) {
     return true;
 }
 
+Expr* consume_numlit() {
+
+    Token t_num;
+    Token t_base;
+    Token t_base_10 = { .type=T_NUMBER, .atom=sv_from("10") };
+
+    // bignum value
+    t_num = runtime.current_token;
+    if (parser_accept(T_NUMBER)) {
+
+        // bignum with explicit base
+        if (parser_accept(T_BASE)) {
+            t_base = runtime.current_token;
+            parser_expect(T_NUMBER);
+            return build_expr_num(t_num, &t_base);
+        }
+
+        // bignum without base - default to 10
+        return build_expr_num(t_num, &t_base_10);
+    }
+
+    apc_return(E_PARSE_ERROR);
+    // unreachable
+    return NULL;
+}
+
 Expr* consume_factor() {
 
     Expr* e;
     Token t;
 
+    // unop
     t = runtime.current_token;
     if (parser_accept(T_PLUS) || parser_accept(T_MINUS)) {
         e = consume_factor();
         return build_expr_unop(t, e);
     }
 
-    if (parser_accept(T_NUMBER)) {
-        return build_expr_num(t);
-    } else if (parser_accept(T_OPEN)) {
+    // numlit
+    if (t.type == T_NUMBER) {
+        return consume_numlit();
+    }
+
+    // ( expr )
+    if (parser_accept(T_OPEN)) {
         e = consume_expr();
         parser_expect(T_CLOSE);
         return e;
@@ -382,14 +416,32 @@ Expr* consume_expr() {
     return expr;
 }
 
-Expr* build_expr_num(Token num) {
+Expr* build_expr_num(Token num, const Token* opt_base) {
+
+    int base = -1;
+    if (opt_base == NULL) {
+        // default to base 10
+        base = 10;
+    } else {
+        // parse explicit base
+        char* end = NULL;
+        char* temp = bn_strndup(opt_base->atom.str, opt_base->atom.len);
+        // a base literal must be in base 10
+        unsigned long ul = strtoul(temp, &end, 10);
+        if (end == NULL) {
+            // base failed to parse
+            apc_return(E_PARSE_ERROR);
+        }
+        base = (int)ul;
+    }
+
     Expr* e = expr_new();
     e->type = X_VALUE;
     e->value.type = V_NUMBER;
     bn_write2(&e->value.number,
         num.atom.str,
         num.atom.len,
-        10);
+        base);
     return e;
 }
 

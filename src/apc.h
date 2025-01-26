@@ -150,6 +150,7 @@ typedef enum {
     T_COMMA, // ,
     T_OPEN, // (
     T_CLOSE, // )
+    T_BASE, // _
     T_PLUS, // +
     T_MINUS, // -
     T_STAR // *
@@ -264,6 +265,7 @@ bool parser_lookahead(Token* out);
 /*
 
 numlit => \d+
+    | \d+ "_" \d+
 
 factor => numlit
     | "+" factor
@@ -279,13 +281,15 @@ expr => term
 
 */
 
+Expr* consume_numlit();
 Expr* consume_factor();
 Expr* consume_term();
 Expr* consume_expr();
 
 // these constructors never fail or consume any tokens
 
-Expr* build_expr_num(Token num);
+// if opt_base is NULL it is ignored
+Expr* build_expr_num(Token num, const Token* opt_base);
 Expr* build_expr_unop(Token op, Expr* arg);
 Expr* build_expr_binop(Token op, Expr* arg0, Expr* arg1);
 

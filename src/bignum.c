@@ -1,5 +1,6 @@
 #include "bignum.h"
 
+// value^max_power == max_digit_value < UINT32_MAX
 BignumBase bn_bases[BN_BASE_MAX + 1] = {
     [2]  = {.value = 2, .max_digit_value = 2147483648, .max_power = 31},
     [3]  = {         3,                    3486784401,              20},
@@ -67,7 +68,7 @@ void bn_copy(Bignum* dest, const Bignum* src) {
 
 // print a standard-representation of a bignum to the console
 // returns # of characters written
-uint32_t bn_print(const Bignum* b) {
+uint32_t bn_print(const Bignum* b, bool print_base) {
     if (b->digits_end == NULL) {
         fputs("(null)", stdout);
         return 6;
@@ -90,12 +91,19 @@ uint32_t bn_print(const Bignum* b) {
 
     // does it only have 1 digit?
     if (b->start == b->digits_end) {
+        if (print_base) {
+            nc += printf("_%u", b->base);
+        }
         return nc;
     }
 
     // print remaining digits with leading 0s
     for (const uint32_t* d = b->start-1; d >= b->digits_end; d--) {
         nc += bn_iprint_digit(*d, b->base, true);
+    }
+
+    if (print_base) {
+        nc += printf("_%u", b->base);
     }
 
     return nc;
@@ -423,21 +431,21 @@ bool bn_iwrite_str(Bignum* out, const char* str, uint32_t base) {
     }
 
     // [-0, 0] => 0
-    if (!strncmp(str, "0", 1)) {
-
-        Bignum result = {
-            .base = BN_BASE_DEFAULT,
-            .digits_end = BN_MALLOC(1 * sizeof(uint32_t)),
-            .len = 1,
-            .sign = 0
-        };
-        result.digits_end[0] = 0;
-        result.start = result.digits_end;
-
-        bn_ifree(out);
-        *out = result;
-        return true;
-    }
+    // if (!strncmp(str, "0", 1)) {
+    //
+    //     Bignum result = {
+    //         .base = BN_BASE_DEFAULT,
+    //         .digits_end = BN_MALLOC(1 * sizeof(uint32_t)),
+    //         .len = 1,
+    //         .sign = 0
+    //     };
+    //     result.digits_end[0] = 0;
+    //     result.start = result.digits_end;
+    //
+    //     bn_ifree(out);
+    //     *out = result;
+    //     return true;
+    // }
 
     // how many leading zeroes are needed to round off a full digit?
 
@@ -499,7 +507,7 @@ bool bn_iwrite_str(Bignum* out, const char* str, uint32_t base) {
 
     bn_ifree(out);
     *out = result;
-    // bn_inormalize(out);
+    bn_inormalize(out);
     return true;
 }
 
@@ -657,19 +665,22 @@ void bn_iadd(Bignum* out, const Bignum* a0, const Bignum* a1) {
     bn_ialloc(&result, max_len);
 
     result.base = a0->base;
+    uint32_t mdv = bn_bases[result.base].max_digit_value;
+    uint32_t real_base = mdv + 1;
 
     // LSD -> MSD
     uint32_t* d0 = a0->digits_end;
     uint32_t* d1 = a1->digits_end;
     uint32_t carry = 0;
+
     int i = 0;
     while (d0 <= a0->start) {
         uint32_t digit0 = *d0;
         uint32_t digit1 = (d1 <= a1->start) ? *d1 : 0;
         uint32_t sum = digit0 + digit1 + carry;
 
-        carry = sum / result.base;
-        result.digits_end[i] = sum % result.base;
+        carry = sum / real_base;
+        result.digits_end[i] = sum % real_base;
 
         d0 += 1;
         d1 += 1;
@@ -693,6 +704,11 @@ void bn_iadd(Bignum* out, const Bignum* a0, const Bignum* a1) {
 void bn_isub(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // borrow algorithm
 
+    if (a0->base != a1->base) {
+        printf("bases do not match!!\n");
+        return;
+    }
+
     // a0 < a1 => -(a1 - a0)
     if (bn_cmp(a0, a1) == -1) {
         bn_isub(out, a1, a0);
@@ -703,7 +719,11 @@ void bn_isub(Bignum* out, const Bignum* a0, const Bignum* a1) {
     Bignum result = {0};
     bn_ialloc(&result, a0->len);
 
-    // assume a0 > a1
+    // now assume a0 > a1
+
+    result.base = a0->base;
+    uint32_t mdv = bn_bases[result.base].max_digit_value;
+    uint32_t real_base = mdv + 1;
 
     // LSD -> MSD
     uint32_t* d0 = a0->digits_end;
@@ -718,7 +738,7 @@ void bn_isub(Bignum* out, const Bignum* a0, const Bignum* a1) {
         int64_t diff = digit0;
 
         if (diff < borrow) {
-            diff += BN_BASE;
+            diff += real_base;
             diff -= borrow;
             borrow = 1;
         } else {
@@ -727,7 +747,7 @@ void bn_isub(Bignum* out, const Bignum* a0, const Bignum* a1) {
         }
 
         if (diff < digit1) {
-            diff += BN_BASE;
+            diff += real_base;
             diff -= digit1;
             borrow = 1;
         } else {
@@ -749,8 +769,19 @@ void bn_isub(Bignum* out, const Bignum* a0, const Bignum* a1) {
 // out = a0 * a1
 // assumes a0, a1 > 0
 void bn_imul(Bignum* out, const Bignum* a0, const Bignum* a1) {
+    // naive algorithm - optimize later
+
+    if (a0->base != a1->base) {
+        printf("bases do not match!!\n");
+        return;
+    }
+
     Bignum result = {0};
     bn_ialloc(&result, bn_rlen(a0) + 1 + bn_rlen(a1) + 1);
+
+    result.base = a0->base;
+    uint32_t mdv = bn_bases[result.base].max_digit_value;
+    uint32_t real_base = mdv + 1;
 
     uint32_t* r_ptr = result.digits_end;
 
@@ -760,8 +791,8 @@ void bn_imul(Bignum* out, const Bignum* a0, const Bignum* a1) {
 
         for (uint32_t* d1 = a1->digits_end; d1 <= a1->start; d1++) {
             uint64_t product = (uint64_t)(*d0) * (*d1) + *res_ptr + carry;
-            *res_ptr = product % BN_BASE;
-            carry = product / BN_BASE;
+            *res_ptr = product % real_base;
+            carry = product / real_base;
             res_ptr++;
         }
 
@@ -775,7 +806,6 @@ void bn_imul(Bignum* out, const Bignum* a0, const Bignum* a1) {
     *out = result;
     bn_inormalize(out);
 }
-
 
 // utils
 
