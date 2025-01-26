@@ -1,8 +1,49 @@
 #include "bignum.h"
 
+BignumBase bn_bases[BN_BASE_MAX + 1] = {
+    [2]  = {.value = 2, .max_digit_value = 2147483648, .max_power = 31},
+    [3]  = {         3,                    3486784401,              20},
+    [4]  = {         4,                    1073741824,              15},
+    [5]  = {         5,                    1220703125,              13},
+    [6]  = {         6,                    2176782336,              12},
+    [7]  = {         7,                    1977326743,              11},
+    [8]  = {         8,                    1073741824,              10},
+    [9]  = {         9,                    3486784401,              10},
+    [10] = {         10,                   1000000000,              9},
+    [11] = {         11,                   2357947691,              9},
+    [12] = {         12,                   429981696,               8},
+    [13] = {         13,                   815730721,               8},
+    [14] = {         14,                   1475789056,              8},
+    [15] = {         15,                   2562890625,              8},
+    [16] = {         16,                   268435456,               7},
+    [17] = {         17,                   410338673,               7},
+    [18] = {         18,                   612220032,               7},
+    [19] = {         19,                   893871739,               7},
+    [20] = {         20,                   1280000000,              7},
+    [21] = {         21,                   1801088541,              7},
+    [22] = {         22,                   2494357888,              7},
+    [23] = {         23,                   3404825447,              7},
+    [24] = {         24,                   191102976,               6},
+    [25] = {         25,                   244140625,               6},
+    [26] = {         26,                   308915776,               6},
+    [27] = {         27,                   387420489,               6},
+    [28] = {         28,                   481890304,               6},
+    [29] = {         29,                   594823321,               6},
+    [30] = {         30,                   729000000,               6},
+    [31] = {         31,                   887503681,               6},
+    [32] = {         32,                   1073741824,              6},
+    [33] = {         33,                   1291467969,              6},
+    [34] = {         34,                   1544804416,              6},
+    [35] = {         35,                   1838265625,              6},
+    [36] = {         36,                   2176782336,              6}
+};
+
+// bn_base_digits[B] is the highest digit available in base B
+const char* bn_base_digits = "00123456789abcdefghijklmnopqrstuvwxyz";
+
 // write from a string or return false for parse error
-bool bn_write(Bignum* b, const char* str) {
-    bool ok = bn_iwrite_str(b, str);
+bool bn_write(Bignum* b, const char* str, uint32_t base) {
+    bool ok = bn_iwrite_str(b, str, base);
     if (ok) {
         bn_inormalize(b);
     }
@@ -10,11 +51,11 @@ bool bn_write(Bignum* b, const char* str) {
 }
 
 // write from a string w/ explicit length or return false for parse error
-bool bn_write2(Bignum* b, const char* str, size_t len) {
+bool bn_write2(Bignum* b, const char* str, size_t len, uint32_t base) {
     char* s2 = strndup(str, len);
-    bool ok = bn_write(b, s2);
+    bool ok = bn_write(b, s2, base);
 #ifndef BN_NOFREE
-    BN_FREE_FN(s2);
+    BN_FREE(s2);
 #endif
     return ok;
 }
@@ -26,7 +67,7 @@ void bn_copy(Bignum* dest, const Bignum* src) {
 
 // print a standard-representation of a bignum to the console
 // returns # of characters written
-int bn_print(const Bignum* b) {
+uint32_t bn_print(const Bignum* b) {
     if (b->digits_end == NULL) {
         fputs("(null)", stdout);
         return 6;
@@ -37,8 +78,7 @@ int bn_print(const Bignum* b) {
         return 1;
     }
 
-    int nc = 0;
-    int n = 0;
+    uint32_t nc = 0;
 
     if (b->sign) {
         fputs("-", stdout);
@@ -46,72 +86,58 @@ int bn_print(const Bignum* b) {
     }
 
     // print leading digit without leading 0s
-    printf("%lu%n", (unsigned long) *b->start, &n);
-    nc += n;
+    nc += bn_iprint_digit(*b->start, b->base, false);
 
     // does it only have 1 digit?
     if (b->start == b->digits_end) {
         return nc;
     }
 
-    // print remaining digits, zero-padded to 9 decimal places
-    for (const uint32_t* d = b->start - 1; d >= b->digits_end; d--) {
-        printf("%0*lu%n", 9, (unsigned long) *d, &n);
-        nc += n;
+    // print remaining digits with leading 0s
+    for (const uint32_t* d = b->start-1; d >= b->digits_end; d--) {
+        nc += bn_iprint_digit(*d, b->base, true);
     }
 
     return nc;
 }
 
-// return a standard-representation of a bignum as a string
-char* bn_to_str(const Bignum* b) {
-    if (b->digits_end == NULL) {
-        return bn_strndup("(null)", 6);
-    }
-
-    if (bn_is_zero(b)) {
-        return bn_strndup("0", 1);
-    }
-
-    char* str;
-    size_t len = 0;
-
-    // append leading digit without leading 0s
-    size_t len_ld = snprintf(NULL, 0, "%s%lu",
-        b->sign ? "-" : "",
-        (unsigned long) *b->start);
-    str = BN_MALLOC_FN((len_ld+1) * sizeof(char));
-    memset(str, '\0', len_ld+1);
-    snprintf(str, len_ld+1, "%s%lu",
-        b->sign ? "-" : "",
-        (unsigned long) *b->start);
-    len += len_ld;
-
-    // does it only have 1 digit?
-    if (b->start == b->digits_end) {
-        return str;
-    }
-
-    // append remaining digits, zero-padded to 9 decimal places
-    for (const uint32_t* d = b->start - 1; d >= b->digits_end; d--) {
-        size_t len_d = snprintf(NULL, 0, "%09lu", (unsigned long) *d);
-        str = realloc(str, (len+len_d+1) * sizeof(char));
-        snprintf(str + len, len_d+1, "%09lu", (unsigned long) *d);
-        len += len_d;
-    }
-
-    return str;
-}
-
-// print all digits in memory order (debug print)
 void bn_dump(const Bignum* b) {
-    fputs("Bignum<num=", stdout);
-    bn_print(b);
-    printf(", len=%lu, rlen=%lu>{\n", b->len, bn_rlen(b));
-    for (uint64_t i = 0; i < b->len; i++) {
-        printf("      [%09llu]\n", (unsigned long long) b->digits_end[i]);
+    if (b->digits_end == NULL) {
+        printf("Bignum{\n"
+            "  .base=%lu,\n"
+            "  .sign=%lu,\n"
+            "  .len=%llu,\n"
+            "  rlen=%lu,\n"
+            "  .digits=[]}\n",
+        (unsigned long)b->base,
+        (unsigned long)b->sign,
+        (unsigned long long)b->len,
+        (unsigned long)bn_rlen(b));
+    } else {
+
+        printf("Bignum{\n"
+            "  .base=%lu,\n"
+            "  .sign=%lu,\n"
+            "  .len=%llu,\n"
+            "  rlen=%lu,\n"
+            "  .digits=[\n"
+            "    <digits_end>\n",
+        (unsigned long)b->base,
+        (unsigned long)b->sign,
+        (unsigned long long)b->len,
+        (unsigned long)bn_rlen(b));
+
+        for (uint32_t* d = b->digits_end; d <= b->start; d++) {
+            printf(
+            "    %0*lu,\n",
+            bn_bases[b->base].max_power,
+            (unsigned long)*d);
+        }
+
+        printf(
+            "    <start>\n"
+            "  ]}\n");
     }
-    fputs("}\n", stdout);
 }
 
 // comparison
@@ -312,11 +338,11 @@ void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
 // they do free previous allocation
 
 // frees previous and reallocates space for n_digits
-// sets out->start
+// sets out->start but not base
 void bn_ialloc(Bignum* out, uint64_t n_digits) {
     bn_ifree(out);
     *out = (Bignum){
-        .digits_end = BN_MALLOC_FN(n_digits * sizeof(uint32_t)),
+        .digits_end = BN_MALLOC(n_digits * sizeof(uint32_t)),
         .len = n_digits
     };
     memset(out->digits_end, 0, n_digits * sizeof(uint32_t));
@@ -326,7 +352,7 @@ void bn_ialloc(Bignum* out, uint64_t n_digits) {
 // create a deep copy of src in dest
 void bn_icopy(Bignum* dest, const Bignum* src) {
     Bignum result = {
-        .digits_end = BN_MALLOC_FN(src->len * sizeof(uint32_t)),
+        .digits_end = BN_MALLOC(src->len * sizeof(uint32_t)),
         .len = src->len,
         .sign = src->sign
     };
@@ -340,7 +366,7 @@ void bn_icopy(Bignum* dest, const Bignum* src) {
 // frees and zeroes out a single bignum
 void bn_ifree(Bignum* out) {
 #ifndef BN_NOFREE
-    BN_FREE_FN(out->digits_end);
+    BN_FREE(out->digits_end);
 #endif
     *out = (Bignum){0};
 }
@@ -357,16 +383,20 @@ void bn_inormalize(Bignum* out) {
     }
 }
 
-// parse str as a base 10 positive integer and put it in out, or return false for parse error
+// parse str as an integer and put it in out, or return false for parse error
 // assumes nothing
-bool bn_iwrite_str(Bignum* out, const char* str) {
+bool bn_iwrite_str(Bignum* out, const char* str, uint32_t base) {
+
+    if (base < BN_BASE_MIN || base > BN_BASE_MAX) {
+        return false;
+    }
 
     if(str == NULL) {
         // null string
         return false;
     }
 
-    int len = strlen(str);
+    uint32_t len = strlen(str);
     if (len == 0) {
         // empty string
         return false;
@@ -385,85 +415,95 @@ bool bn_iwrite_str(Bignum* out, const char* str) {
         }
     }
 
-    // must be all base 10 digits
+    // must be all valid digits in the specified base
     for (const char* s = str; *s != '\0'; s++) {
-        if (!isdigit(*s)) {
+        if (!digit_is_valid_in_base(*s, base, NULL)) {
             return false;
         }
     }
 
-    // strip leading zeroes and check if it's all 0s
-    while (len > 0 && str[0] == '0') {
-        str++;
-        len--;
-    }
-
-    if (len == 0) {
-        // number was all "00000"
-        bn_iwrite_parts(out, 0, 0);
-        return true;
-    }
-
-    // break the string into 1 or more chunks
-    // a chunk can be up to 9 decimal digits
-    int first_chunk_len = len % 9;
-    int number_of_extra_chunks = len / 9;
-    if (first_chunk_len == 0) {
-        first_chunk_len = 9;
-        number_of_extra_chunks -= 1;
-    }
-
-    size_t l = number_of_extra_chunks + 1;
-    Bignum result = {
-        .digits_end = BN_MALLOC_FN(l * sizeof(uint32_t)),
-        .len = l,
-        .sign = (is_negative) ? 1 : 0
-    };
-    memset(result.digits_end, 0, l * sizeof(uint32_t));
-
     // [-0, 0] => 0
     if (!strncmp(str, "0", 1)) {
-        result.sign = 0;
+
+        Bignum result = {
+            .base = BN_BASE_DEFAULT,
+            .digits_end = BN_MALLOC(1 * sizeof(uint32_t)),
+            .len = 1,
+            .sign = 0
+        };
+        result.digits_end[0] = 0;
+        result.start = result.digits_end;
 
         bn_ifree(out);
         *out = result;
         return true;
     }
 
-    // first chunk - can be 1-9 characters/decimal digits long
-    uint32_t first_digit_value;
-    if (!bn_str_to_u32(str, 0, first_chunk_len, &first_digit_value)) {
-        // first digit conversion failed
-        bn_ifree(&result);
-        return false;
+    // how many leading zeroes are needed to round off a full digit?
+
+    uint32_t mp = bn_bases[base].max_power;
+
+    // avoid wasting space - add 0 bytes if len already rounded off
+    uint32_t n_leading_zeroes = (len % mp == 0) ? 0 : (mp - (len % mp));
+    uint32_t new_len = len + n_leading_zeroes;
+
+    // if needed, copy the string, padding with leading zeroes
+
+    char* new_str;
+
+    if (n_leading_zeroes == 0) {
+        new_str = bn_strndup(str, len);
+    } else {
+        new_str = BN_MALLOC((new_len + 1) * sizeof(char));
+        memset(new_str, 0, new_len + 1);
+        memset(new_str, '0', n_leading_zeroes);
+
+        // copy all the "real" digits from the old string
+        memcpy(new_str + n_leading_zeroes, str, len);
     }
-    result.digits_end[result.len - 1] = first_digit_value;
 
-    // remaining chunks
-    const char* next_chunk = str + first_chunk_len;
-    int next_digit_index = result.len - 2;
-    while (next_digit_index >= 0) {
+    // parse the number, mp characters at a time
 
-        // nth chunk - always 9 digits long
-        uint32_t next_digit_value;
-        if (!bn_str_to_u32(next_chunk, 0, 9, &next_digit_value)) {
+    // guaranteed: new_len % mp == 0 -- very important
+    uint32_t num_digits = new_len / mp;
+
+    Bignum result = {
+        .base = base,
+        .digits_end = BN_MALLOC(num_digits * sizeof(uint32_t)),
+        .len = num_digits,
+        .sign = (is_negative) ? 1 : 0,
+    };
+    memset(result.digits_end, 0, num_digits * sizeof(uint32_t));
+
+    // loop in reverse order
+    // mp characters => 1 digit
+
+    uint32_t* dp = &result.digits_end[result.len - 1];
+    char* sp = new_str;
+
+    while (sp < new_str + len) {
+
+        if (!bn_str_to_u32(sp, 0, mp, base, dp)) {
             // nth digit conversion failed
             bn_ifree(&result);
             return false;
         }
-        result.digits_end[next_digit_index] = next_digit_value;
 
-        next_chunk += 9;
-        next_digit_index -= 1;
+        sp += mp;
+        dp -= 1;
     }
-    result.start = result.digits_end + result.len - 1;
+
+#ifndef BN_NOFREE
+    BN_FREE(new_str);
+#endif
 
     bn_ifree(out);
     *out = result;
+    // bn_inormalize(out);
     return true;
 }
 
-// writes a single digit to out, never fails
+// writes a single base-10 digit to out, never fails
 // assumes nothing
 void bn_iwrite_parts(Bignum* out, uint32_t sign, uint32_t value) {
     bool overflow = (value > BN_DIGIT_MAX);
@@ -479,7 +519,37 @@ void bn_iwrite_parts(Bignum* out, uint32_t sign, uint32_t value) {
 
     out->start = out->digits_end;
     out->sign = sign;
+    out->base = BN_BASE_DEFAULT;
     bn_inormalize(out);
+}
+
+uint32_t bn_iprint_digit(uint32_t digit, uint32_t base, bool leading_0s) {
+    uint32_t d = digit;
+    uint32_t n = 0;
+    while (d > 0) {
+        d /= bn_bases[base].value;
+        n += 1;
+    }
+    uint32_t n_digits = bn_bases[base].max_power - n;
+
+    uint32_t nc = 0;
+
+    if (leading_0s) {
+        for (uint32_t i = 0; i < n_digits; i++) {
+            printf("0");
+            nc += 1;
+        }
+    }
+
+    if (digit / bn_bases[base].value != 0) {
+        nc += bn_iprint_digit(digit / bn_bases[base].value, base, false);
+    }
+
+    // +1 because bn_bases is zero indexed
+    printf("%c", bn_base_digits[digit % bn_bases[base].value + 1]);
+    nc += 1;
+
+    return nc;
 }
 
 // out = a0 << n (in base BN_BASE)
@@ -527,7 +597,7 @@ void bn_irshift(Bignum* out, const Bignum* a0, uint64_t n) {
     uint64_t len0 = a0->start - a0->digits_end + 1;
 
     if (n >= len0) {
-        bn_iwrite_str(out, "0");
+        bn_iwrite_parts(out, 0, 0);
         return;
     }
 
@@ -568,6 +638,11 @@ void bn_ineg(Bignum* out, const Bignum* a0) {
 void bn_iadd(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // carry algorithm
 
+    if (a0->base != a1->base) {
+        printf("bases do not match!!\n");
+        return;
+    }
+
     // swap the numbers such that a0->len >= a1->len
     // this makes computation simpler in the loop
     // also guarantees `max(len0, len1) == len0`
@@ -581,6 +656,8 @@ void bn_iadd(Bignum* out, const Bignum* a0, const Bignum* a1) {
     size_t max_len = 1 + bn_rlen(a0); // +1 for possible carry
     bn_ialloc(&result, max_len);
 
+    result.base = a0->base;
+
     // LSD -> MSD
     uint32_t* d0 = a0->digits_end;
     uint32_t* d1 = a1->digits_end;
@@ -591,8 +668,8 @@ void bn_iadd(Bignum* out, const Bignum* a0, const Bignum* a1) {
         uint32_t digit1 = (d1 <= a1->start) ? *d1 : 0;
         uint32_t sum = digit0 + digit1 + carry;
 
-        carry = sum / BN_BASE;
-        result.digits_end[i] = sum % BN_BASE;
+        carry = sum / result.base;
+        result.digits_end[i] = sum % result.base;
 
         d0 += 1;
         d1 += 1;
@@ -711,19 +788,23 @@ int bn_max(int x, int y) {
 }
 
 // false => conversion error
-// out = u32(str[start:end])
-bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t* out) {
+// out = u32(str[start:end], base)
+bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t base, uint32_t* out) {
 
-    if (end - start > 9) {
+    if (end - start > bn_bases[base].max_power) {
+        return false;
+    }
+
+    if (base < BN_BASE_MIN || base > BN_BASE_MAX) {
         return false;
     }
 
     char* b = bn_strndup(str + start, end - start);
 
     char* b_end = NULL;
-    unsigned long ul = strtoul(b, &b_end, 10);
+    unsigned long ul = strtoul(b, &b_end, base);
 #ifndef BN_NOFREE
-    BN_FREE_FN(b);
+    BN_FREE(b);
 #endif
 
     if (b_end == NULL) {
@@ -735,8 +816,28 @@ bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t* out)
 }
 
 char* bn_strndup(const char* str, int n) {
-    char* dup = BN_MALLOC_FN((n + 1) * sizeof(char));
+    char* dup = BN_MALLOC((n + 1) * sizeof(char));
     strncpy(dup, str, n);
+    dup[n] = '\0';
     return dup;
 }
 
+bool digit_is_valid_in_base(char digit, uint32_t base, uint32_t* value_out) {
+    if (base < BN_BASE_MIN || base > BN_BASE_MAX) {
+        return false;
+    }
+
+    if (!isalnum(digit)) {
+        return false;
+    }
+
+    for (uint32_t i = 1; i <= base; i++) {
+        if (digit == bn_base_digits[i]) {
+            if (value_out != NULL) {
+                *value_out = i;
+            }
+            return true;
+        }
+    }
+    return false;
+}

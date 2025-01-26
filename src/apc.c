@@ -388,7 +388,8 @@ Expr* build_expr_num(Token num) {
     e->value.type = V_NUMBER;
     bn_write2(&e->value.number,
         num.atom.str,
-        num.atom.len);
+        num.atom.len,
+        10);
     return e;
 }
 

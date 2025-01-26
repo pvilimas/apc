@@ -19,13 +19,28 @@
 // positive and negative integers
 // comparing numbers
 // + - *
+// base 2 through base 36
 
 typedef struct {
-    uint32_t* digits_end; // pointer to start of buffer/last digit (LSD)
-    uint32_t* start; // pointer to first digit MSD
-    uint64_t len; // total capacity of buffer
-    uint64_t sign; // 1 means negative
+    uint32_t base;          // valid range: 2-36
+    uint32_t sign;          // 1 means negative
+    uint32_t* digits_end;   // pointer to start of buffer/last digit (LSD)
+    uint32_t* start;        // pointer to first digit MSD
+    uint64_t len;           // total capacity of buffer
 } Bignum;
+
+#define BN_BASE_MIN 2
+#define BN_BASE_MAX 36
+#define BN_BASE_DEFAULT 10
+
+typedef struct {
+    uint32_t value;
+    uint32_t max_digit_value;
+    uint32_t max_power;
+} BignumBase;
+
+extern BignumBase bn_bases[BN_BASE_MAX + 1];
+extern const char* bn_base_digits;
 
 // each digit is base 10^9 (largest power of 10 that fits in a u32)
 #define BN_BASE         1000000000
@@ -36,16 +51,16 @@ typedef struct {
 // #define BN_NOFREE
 
 // optional custom memory functions
-#ifndef BN_MALLOC_FN
-#define BN_MALLOC_FN malloc
+#ifndef BN_MALLOC
+#define BN_MALLOC malloc
 #endif
 
-#ifndef BN_REALLOC_FN
-#define BN_REALLOC_FN realloc
+#ifndef BN_REALLOC
+#define BN_REALLOC realloc
 #endif
 
-#ifndef BN_FREE_FN
-#define BN_FREE_FN free
+#ifndef BN_FREE
+#define BN_FREE free
 #endif
 
 // bignums must be initialized to {0} before calling any functions on it
@@ -78,22 +93,22 @@ typedef struct {
 // io
 
 // write a value from a string to a bignum, or return false for parse error
-bool bn_write(Bignum* b, const char* str);
+bool bn_write(Bignum* b, const char* str, uint32_t base);
 
 // write a string with explicit length or return false for parse error
-bool bn_write2(Bignum* b, const char* str, size_t len);
+bool bn_write2(Bignum* b, const char* str, size_t len, uint32_t base);
 
 // write a copy of src into dest
 void bn_copy(Bignum* dest, const Bignum* src);
 
+// TODO write src to dest in base new_base
+void bn_convert_base(Bignum* dest, const Bignum* src, uint32_t new_base);
+
 // print a standard-representation of a bignum to the console
 // returns # of characters written
-int bn_print(const Bignum* b);
+uint32_t bn_print(const Bignum* b);
 
-// write a standard-representation of a bignum to a string
-char* bn_to_str(const Bignum* b);
-
-// debug print to the console
+// print all struct fields and allocated digits in memory order (debug print)
 void bn_dump(const Bignum* b);
 
 // comparison
@@ -139,10 +154,14 @@ void bn_ifree(Bignum* out);
 void bn_inormalize(Bignum* out);
 
 // write a string value to a bignum
-bool bn_iwrite_str(Bignum* out, const char* str);
+bool bn_iwrite_str(Bignum* out, const char* str, uint32_t base);
 
-// write a signbit+value to a bignum (sign == 0 => positive, 1 => negative)
+// write a base-10 signbit+value to a bignum (sign == 0 => positive, 1 => negative)
 void bn_iwrite_parts(Bignum* out, uint32_t sign, uint32_t value);
+
+// print a single digit to stdout
+// returns # of characters written
+uint32_t bn_iprint_digit(uint32_t digit, uint32_t base, bool print_leading_0s);
 
 // out = a0 << n (in base BN_BASE)
 // assumes n > 0
@@ -176,8 +195,11 @@ int bn_min(int x, int y);
 int bn_max(int x, int y);
 
 // parse u32 from a string slice or return false for parse error
-bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t* out);
+bool bn_str_to_u32(const char* str, uint32_t start, uint32_t end, uint32_t base, uint32_t* out);
 
 char* bn_strndup(const char* str, int n);
+
+// writes to value_out if it returns true
+bool digit_is_valid_in_base(char digit, uint32_t base, uint32_t* value_out);
 
 #endif // BIGNUM_H
