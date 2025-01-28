@@ -1,13 +1,15 @@
 #ifndef APC_H
 #define APC_H
 
-#define BN_NOFREE
-#include "bignum.h"
-
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "memory.h"
+
+#define BN_NOFREE
+#include "bignum.h"
 
 // apc.h - arbitrary-precision calculator shell command
 
@@ -31,9 +33,6 @@ typedef enum {
 // initialize apc
 void apc_init();
 
-// exit the program with exit code 0 or 1
-void apc_exit(int exit_code);
-
 // evaluate the string and print the result
 void apc_eval(const char* str);
 
@@ -49,6 +48,8 @@ void apc_return(ErrorCode exit_code);
 
 // unmap shared memory, exit from main proc with exit_code
 void apc_exit(int exit_code);
+
+// internal
 
 #define DEBUG_PRINT 1
 #define BREAKPOINT()                \

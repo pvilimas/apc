@@ -4,29 +4,19 @@ int main() {
     Bignum a0, a1, result;
     bn_init(&a0, &a1, &result);
 
-    if (!bn_write(&a0, "1101", 2)) {
-        printf("failed\n");
-        return 0;
+    bn_write(&a0, "5598472", 10);
+        bn_irshift(&a0, &a0, 1);
+        bn_irshift(&a0, &a0, 1);
+        bn_ilshift(&a0, &a0, 1);
+        bn_ilshift(&a0, &a0, 1);
+    for (int i = 0; i < 30; i++) {
+        bn_print(&a0, true);
+        printf("\n");
+        bn_ilshift(&a0, &a0, 1);
+        bn_print(&a0, true);
+        printf("\n");
+        bn_irshift(&a0, &a0, 1);
     }
-
-    printf("a0: ");
-    bn_print(&a0, true);
-    printf("\n");
-
-    if (!bn_write(&a1, "0010", 2)) {
-        printf("failed\n");
-        return 0;
-    }
-
-    printf("a1: ");
-    bn_print(&a1, true);
-    printf("\n");
-
-    bn_iadd(&result, &a0, &a1);
-
-    printf("result: ");
-    bn_print(&result, true);
-    printf("\n");
 
     return 0;
 }

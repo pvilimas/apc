@@ -19,11 +19,11 @@ void apc_init() {
 
     // init opdata lookup tables
     runtime.n_unops = 2;
-    runtime.unop_data = calloc(runtime.n_unops, sizeof(UnopData));
+    runtime.unop_data = apc_malloc(runtime.n_unops * sizeof(UnopData));
     runtime.unop_data[0] = (UnopData){'+', UnopFn_Plus};    runtime.unop_data[1] = (UnopData){'-', UnopFn_Negate};
 
     runtime.n_binops = 3;
-    runtime.binop_data = calloc(runtime.n_binops, sizeof(BinopData));
+    runtime.binop_data = apc_malloc(runtime.n_binops * sizeof(BinopData));
     runtime.binop_data[0] = (BinopData){'+', BinopFn_Add};
     runtime.binop_data[1] = (BinopData){'-', BinopFn_Sub};
     runtime.binop_data[2] = (BinopData){'*', BinopFn_Mul};
@@ -61,7 +61,7 @@ void apc_eval(const char* str) {
         // read all tokens into a list
         while(scan_next_token()) {
             runtime.n_tokens += 1;
-            runtime.tokens = realloc(runtime.tokens,
+            runtime.tokens = apc_realloc(runtime.tokens,
                 runtime.n_tokens * sizeof(Token));
             runtime.tokens[runtime.n_tokens-1] = runtime.current_token;
         }
@@ -125,11 +125,12 @@ void apc_start_repl() {
     while (1) {
 
         fputs(" = ", stdout);
+        // TODO write custom getline that uses apc_malloc
         ssize_t nread = getline(&line, &len, stdin);
 
         if (nread == -1 || line == NULL) {
             // used pressed Ctrl+D
-            fputs("^D\n\n", stdout);
+            fputs("^D\n", stdout);
             apc_exit(E_OK);
         }
 
@@ -167,9 +168,10 @@ void apc_return(ErrorCode exit_code) {
 stringbuffer sb_copy(const stringbuffer* sb) {
     stringbuffer sb2 = {
         .len = sb->len,
-        .str = calloc(sb->len, sizeof(char))
+        .str = apc_malloc(sb->len * sizeof(char))
     };
     memcpy(sb2.str, sb->str, sb->len);
+    sb2.str[sb->len] = '\0';
 
     return sb2;
 }
@@ -258,10 +260,7 @@ bool scan_next_token() {
 
     // consume a whole word, stopping at first space or operator
 
-    // TODO
-    // starts as a number but switches to T_IDENT if any char isalpha()
     t.type = T_NUMBER;
-
     while (runtime.last_index < l) {
         c = s[runtime.last_index];
 
@@ -280,6 +279,9 @@ bool scan_next_token() {
     if (runtime.last_index < l) {
         t.atom.len -= 1;
     }
+
+    // if there was a-zA-Z in the word and it doesn't have explicit base,
+    // it's an identifier
 
     // advance ptr and write token
     runtime.current_token = t;

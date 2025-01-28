@@ -3,11 +3,13 @@
 import os
 from io import StringIO
 import sys
+import random
 from random import randint
 import subprocess
 from dataclasses import dataclass
 
 N = 1000
+DIGITS = "0123456789abcdefghjiklmnopqrstuvwxyz"
 
 def run_command(command):
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -34,22 +36,27 @@ def random_expr() -> Expr:
     if r1 <= 2:
         # X_VALUE, V_NUMBER
 
-        # number of digits
-        r2 = randint(1, 25)
+        # base
+        # r2 = randint(2,36)
+        r2 = random.choice([2,7,8,10,16,31])
+        allowed_digits = DIGITS[0:r2-1]
 
-        # 1000000000...
-        s = '1' + ''.join(['0' * (r2 - 1)])
-        nd = int(s)
+        # num digits
+        r3 = randint(1, 35)
 
-        # signbit
-        r3 = randint(0, 1)
+        s = ""
+        for i in range(r3):
+            s += random.choice(allowed_digits)
 
-        if r3 == 0:
-            x = randint(0, nd)
-        else:
-            x = randint(-nd, 0)
+        # sign
+        r4 = randint(0, 1)
+        if r4:
+            s = f"-{s}"
 
-        return Expr(str(x), str(x))
+        apc_s = s
+        if r3 != 10:
+            apc_s = f"{s}_{r2}"
+        return Expr(str(int(s,r2)), s)
     elif r1 == 3:
         # X_UNOP
 
