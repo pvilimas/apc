@@ -154,7 +154,8 @@ typedef enum {
     T_BASE, // _
     T_PLUS, // +
     T_MINUS, // -
-    T_STAR // *
+    T_STAR, // *
+    T_SLASH // /
 } TokenType;
 
 typedef struct {
@@ -302,12 +303,13 @@ Value eval_expr(const Expr* e);
 
 // unary operators
 Value UnopFn_Plus(Value a0); // +a0
-Value UnopFn_Negate(Value a0); // -a0
+Value UnopFn_Minus(Value a0); // -a0
 
 // binary operators
 Value BinopFn_Add(Value a0, Value a1); // a0 - a1
 Value BinopFn_Sub(Value a0, Value a1); // a0 + a1
 Value BinopFn_Mul(Value a0, Value a1); // a0 * a1
+Value BinopFn_Div(Value a0, Value a1); // a0 / a1
 
 // utils.c
 

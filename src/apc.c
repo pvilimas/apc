@@ -20,13 +20,14 @@ void apc_init() {
     // init opdata lookup tables
     runtime.n_unops = 2;
     runtime.unop_data = apc_malloc(runtime.n_unops * sizeof(UnopData));
-    runtime.unop_data[0] = (UnopData){'+', UnopFn_Plus};    runtime.unop_data[1] = (UnopData){'-', UnopFn_Negate};
+    runtime.unop_data[0] = (UnopData){'+', UnopFn_Plus};    runtime.unop_data[1] = (UnopData){'-', UnopFn_Minus};
 
-    runtime.n_binops = 3;
+    runtime.n_binops = 4;
     runtime.binop_data = apc_malloc(runtime.n_binops * sizeof(BinopData));
     runtime.binop_data[0] = (BinopData){'+', BinopFn_Add};
     runtime.binop_data[1] = (BinopData){'-', BinopFn_Sub};
     runtime.binop_data[2] = (BinopData){'*', BinopFn_Mul};
+    runtime.binop_data[3] = (BinopData){'/', BinopFn_Div};
 }
 
 void apc_exit(int exit_code) {
@@ -80,8 +81,10 @@ void apc_eval(const char* str) {
         fputs(" = ", stdout);
 
         // only print explicit base if not base10
+        // always print in lowercase for now
         bn_print(&final_result.number,
-            final_result.number.base != 10);
+            final_result.number.base != 10,
+            false);
 
         // done
         *runtime.error_code = E_OK;
@@ -197,7 +200,7 @@ BinopData* get_binop(char name) {
 void expr_print(const Expr* e) {
     if (e->type == X_VALUE) {
         fputs("Value{", stdout);
-        bn_print(&e->value.number, true);
+        bn_print(&e->value.number, true, false);
         fputc('}', stdout);
     } else if (e->type == X_UNOP) {
         printf("Unop{%c, ", e->unop.data->name);
@@ -250,6 +253,7 @@ bool scan_next_token() {
     else if (c == '+') t.type = T_PLUS;
     else if (c == '-') t.type = T_MINUS;
     else if (c == '*') t.type = T_STAR;
+    else if (c == '/') t.type = T_SLASH;
 
     if (t.type != T_NONE) {
         // advance ptr and write token
@@ -264,7 +268,7 @@ bool scan_next_token() {
     while (runtime.last_index < l) {
         c = s[runtime.last_index];
 
-        if (char_in_string(c, ",()_+-*") || isspace(c)) {
+        if (char_in_string(c, ",()_+-*/") || isspace(c)) {
             break;
         } else if (!isalnum(c)) {
             apc_return(E_PARSE_ERROR);
@@ -383,7 +387,8 @@ Expr* consume_term() {
 
     term = consume_factor();
 
-    while (runtime.current_token.type == T_STAR) {
+    while (runtime.current_token.type == T_STAR
+    || runtime.current_token.type == T_SLASH) {
         op = runtime.current_token;
         if (!parser_next_token()) {
             apc_return(E_PARSE_ERROR);
@@ -427,7 +432,7 @@ Expr* build_expr_num(Token num, const Token* opt_base) {
     } else {
         // parse explicit base
         char* end = NULL;
-        char* temp = bn_strndup(opt_base->atom.str, opt_base->atom.len);
+        char* temp = bnu_strndup(opt_base->atom.str, opt_base->atom.len);
         // a base literal must be in base 10
         unsigned long ul = strtoul(temp, &end, 10);
         if (end == NULL) {
