@@ -22,12 +22,13 @@ void apc_init() {
     runtime.unop_data = apc_malloc(runtime.n_unops * sizeof(UnopData));
     runtime.unop_data[0] = (UnopData){'+', UnopFn_Plus};    runtime.unop_data[1] = (UnopData){'-', UnopFn_Minus};
 
-    runtime.n_binops = 4;
+    runtime.n_binops = 5;
     runtime.binop_data = apc_malloc(runtime.n_binops * sizeof(BinopData));
     runtime.binop_data[0] = (BinopData){'+', BinopFn_Add};
     runtime.binop_data[1] = (BinopData){'-', BinopFn_Sub};
     runtime.binop_data[2] = (BinopData){'*', BinopFn_Mul};
     runtime.binop_data[3] = (BinopData){'/', BinopFn_Div};
+    runtime.binop_data[4] = (BinopData){'%', BinopFn_Mod};
 }
 
 void apc_exit(int exit_code) {
@@ -254,6 +255,7 @@ bool scan_next_token() {
     else if (c == '-') t.type = T_MINUS;
     else if (c == '*') t.type = T_STAR;
     else if (c == '/') t.type = T_SLASH;
+    else if (c == '%') t.type = T_PERCENT;
 
     if (t.type != T_NONE) {
         // advance ptr and write token
@@ -268,7 +270,7 @@ bool scan_next_token() {
     while (runtime.last_index < l) {
         c = s[runtime.last_index];
 
-        if (char_in_string(c, ",()_+-*/") || isspace(c)) {
+        if (char_in_string(c, ",()_+-*/%") || isspace(c)) {
             break;
         } else if (!isalnum(c)) {
             apc_return(E_PARSE_ERROR);
@@ -411,7 +413,8 @@ Expr* consume_expr() {
     expr = consume_term();
 
     while(runtime.current_token.type == T_PLUS
-    || runtime.current_token.type == T_MINUS) {
+    || runtime.current_token.type == T_MINUS
+    || runtime.current_token.type == T_PERCENT) {
         op = runtime.current_token;
         if (!parser_next_token()) {
             apc_return(E_PARSE_ERROR);
@@ -425,11 +428,10 @@ Expr* consume_expr() {
 
 Expr* build_expr_num(Token num, const Token* opt_base) {
 
-    int base = -1;
-    if (opt_base == NULL) {
-        // default to base 10
-        base = 10;
-    } else {
+    // default to base 10
+    uint32_t base = BN_BASE_DEFAULT;
+
+    if (opt_base != NULL) {
         // parse explicit base
         char* end = NULL;
         char* temp = bnu_strndup(opt_base->atom.str, opt_base->atom.len);
@@ -439,13 +441,13 @@ Expr* build_expr_num(Token num, const Token* opt_base) {
             // base failed to parse
             apc_return(E_PARSE_ERROR);
         }
-        base = (int)ul;
+        base = (uint32_t)ul;
     }
 
     Expr* e = expr_new();
     e->type = X_VALUE;
     e->value.type = V_NUMBER;
-    bn_write2(&e->value.number,
+    bn_write3(&e->value.number,
         num.atom.str,
         num.atom.len,
         base);

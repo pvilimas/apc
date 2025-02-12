@@ -28,7 +28,12 @@ def main():
             break
 
         apc_answer = test_apc(i)[:-1]
-        py_answer = str(eval(i))
+        py_answer: str
+
+        try:
+            py_answer = str(eval(i))
+        except:
+            py_answer = "error"
 
         if apc_answer == py_answer:
             print(f"  correct: \"{apc_answer}\"")

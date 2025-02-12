@@ -76,7 +76,21 @@ Value BinopFn_Div(Value a0, Value a1) {
     }
 
     Value result = { .type = V_NUMBER };
-    bn_div(&result.number,
+    bn_divmod(&result.number, NULL,
+        &a0.number,
+        &a1.number);
+
+    return result;
+}
+
+// a0 % a1 : (Num, Num) => Num
+Value BinopFn_Mod(Value a0, Value a1) {
+    if (a0.type != V_NUMBER || a1.type != V_NUMBER) {
+        apc_return(E_VALUE_ERROR);
+    }
+
+    Value result = { .type = V_NUMBER };
+    bn_divmod(NULL, &result.number,
         &a0.number,
         &a1.number);
 

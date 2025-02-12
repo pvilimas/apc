@@ -31,14 +31,20 @@ class Expr:
     py_expr: str
     apc_expr: str
 
+    def __init__(self, p, a):
+        self.py_expr = p
+        self.apc_expr = a
+
+def random_number() -> int:
+    return randint(1,10**32)
+
 def random_expr() -> Expr:
     r1 = randint(0, 5)
     if r1 <= 2:
         # X_VALUE, V_NUMBER
 
         # base
-        # r2 = randint(2,36)
-        r2 = random.choice([2,7,8,10,16,31])
+        r2 = randint(2,36)
         allowed_digits = DIGITS[0:r2-1]
 
         # num digits
@@ -53,10 +59,8 @@ def random_expr() -> Expr:
         if r4:
             s = f"-{s}"
 
-        apc_s = s
-        if r3 != 10:
-            apc_s = f"{s}_{r2}"
-        return Expr(str(int(s,r2)), s)
+        apc_s = f"{s}_{r2}"
+        return Expr(str(int(s,r2)), apc_s)
     elif r1 == 3:
         # X_UNOP
 
@@ -78,7 +82,7 @@ def random_expr() -> Expr:
         # X_BINOP
 
         # operation
-        r2 = randint(0, 2)
+        r2 = randint(0, 3)
         re0 = random_expr()
         re1 = random_expr()
         if r2 == 0:
@@ -99,6 +103,9 @@ def random_expr() -> Expr:
                     f"({re0.apc_expr})({re1.apc_expr})",
                     f"({re0.apc_expr}){re1.apc_expr}",
                     f"{re0.apc_expr} * {re1.apc_expr}"][r3])
+        elif r2 == 3:
+            return Expr(f"{re0.py_expr} / {re1.py_expr}",
+                        f"{re0.apc_expr} / {re1.apc_expr}")
 
 def run_test_apc():
     passed = 0
@@ -119,8 +126,33 @@ def run_test_apc():
 
     print(f"passed {passed} / {N}")
 
+def run_test_apc_div():
+    passed = 0
+
+    for i in range(N):
+
+        x = randint(1,10) * 10**randint(10,20)
+        y = randint(1,10)
+
+        if y == 0:
+            continue
+
+        py_expr = f"{x} // {y}"
+        apc_expr = f"{x} / {y}"
+
+        py_answer = str(eval(py_expr))
+        apc_answer = test_apc(apc_expr).strip('\n')
+
+        if py_answer == apc_answer:
+            passed += 1
+        else:
+            print(f"{apc_expr=  }\n"
+                f"{py_answer= }\n"
+                f"{apc_answer=}\n")
+    print(f"passed {passed} / {N}")
+
 def main():
-    run_test_apc()
+    run_test_apc_div()
 
 if __name__ == '__main__':
     main()

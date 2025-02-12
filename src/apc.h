@@ -146,16 +146,17 @@ BinopData* get_binop(char name);
 
 typedef enum {
     T_NONE,
-    T_IDENT, // \w+
-    T_NUMBER, // \d+
-    T_COMMA, // ,
-    T_OPEN, // (
-    T_CLOSE, // )
-    T_BASE, // _
-    T_PLUS, // +
-    T_MINUS, // -
-    T_STAR, // *
-    T_SLASH // /
+    T_IDENT,    // \w+
+    T_NUMBER,   // \d+
+    T_COMMA,    // ,
+    T_OPEN,     // (
+    T_CLOSE,    // )
+    T_BASE,     // _
+    T_PLUS,     // +
+    T_MINUS,    // -
+    T_STAR,     // *
+    T_SLASH,    // /
+    T_PERCENT,  // %
 } TokenType;
 
 typedef struct {
@@ -310,6 +311,7 @@ Value BinopFn_Add(Value a0, Value a1); // a0 - a1
 Value BinopFn_Sub(Value a0, Value a1); // a0 + a1
 Value BinopFn_Mul(Value a0, Value a1); // a0 * a1
 Value BinopFn_Div(Value a0, Value a1); // a0 / a1
+Value BinopFn_Mod(Value a0, Value a1); // a0 % a1
 
 // utils.c
 
