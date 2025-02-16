@@ -21,23 +21,23 @@ typedef struct {
     bn_digit_t* digits_end;     // allocated pointer to last digit (LSD)
     size_t msd_pos;             // position of first digit (MSD)
     size_t capacity;            // total capacity of digits_end
-    uint8_t base;               // valid range: 2-36
+    uint8_t base;               // valid range [2,36]
     uint8_t signbit;            // 1 means negative
 } Bignum;
-
-#define BN_BASE_DEFAULT 10
-#define BN_BASE_MIN 2
-#define BN_BASE_MAX 36
 
 // definition: fake_base^width = real_base < UINT32_MAX < fake_base^(width+1)
 typedef struct {
     uint8_t fake_base;
     uint8_t width;
     uint32_t real_base;
-    char last_digit[2];     // lower and uppercase
+    char last_digit[2];         // lower and uppercase
 } BignumBase;
 
-extern const BignumBase bn_bases[BN_BASE_MAX + 1];
+#define BN_BASE_MIN     2
+#define BN_BASE_MAX     36
+#define BN_BASE_DEFAULT 10
+
+extern const BignumBase BN_BASE[BN_BASE_MAX + 1];
 
 // constants
 
@@ -89,7 +89,8 @@ bool bn_write3(Bignum* b, const char* str, size_t len, uint8_t base);
 void bn_copy(Bignum* dest, const Bignum* src);
 
 // copy src to dest, converting to new_base
-void bn_convert(Bignum* dest, const Bignum* src, uint8_t new_base);
+// returns false if new_base is out of range [2, 36]
+bool bn_convert(Bignum* dest, const Bignum* src, uint8_t new_base);
 
 // print a standard-representation of a bignum to the console
 // returns # of characters written
@@ -149,7 +150,13 @@ bool bni_is_valid(const Bignum* b);
 
 // free out if it's allocated
 // allocate space for n_digits in the specified base, zeroed out
-void bni_realloc(Bignum* out, size_t n_digits, uint8_t base);
+// assumes out is either {0} or a previously allocated Bignum
+void bni_freealloc(Bignum* out, size_t n_digits, uint8_t base);
+
+// allocates space for n leading digits zeroed out
+// does not free or clear digits
+// assumes out is NOT {0}
+void bni_append_zeros(Bignum* out, size_t n);
 
 // create a deep copy of src in dest
 void bni_copy(Bignum* dest, const Bignum* src);
@@ -165,9 +172,7 @@ void bni_try_free(Bignum* out);
 void bni_normalize(Bignum* out);
 
 // write a string value to a bignum, or return false for parse error
-// TODO make this accept a length argument to avoid a pointless strdup
-// TODO make this assume base is valid, move that check to the write functions
-bool bni_write_str(Bignum* out, const char* str, uint8_t base);
+bool bni_write_str(Bignum* out, const char* str, size_t len, uint8_t base);
 
 // write a 1-digit value in any base to a bignum
 // returns false for illegal digit value
@@ -220,7 +225,7 @@ void bni_mul(Bignum* out, const Bignum* a0, const Bignum* a1);
 // r_out = a0 % a1 (remainder)
 // assumes a0, a1 > 0
 void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
-                   const Bignum* a0, size_t a1);
+                   const Bignum* a0, bn_digit_t a1);
 
 // utils
 
@@ -231,16 +236,17 @@ char* bnu_strndup(const char* str, size_t n);
 // if q_out and/or r_out == NULL they are ignored, else:
 // q_out = x // y (integer divide quotient)
 // r_out = x % y (mod aka remainder)
-// returns false if it failed because y == 0 (div/mod by zero error)
 // (base does not matter for single digit operations)
-bool bnu_divqr_1x1(bn_digit_t x,
+// assumes x, y > 0
+void bnu_divqr_1x1(bn_digit_t x,
                     bn_digit_t y,
                     bn_digit_t* q_out, bn_digit_t* r_out);
 
 // same as above except x0-x1 is treated as 2 digits of a number in base <base>
 // and quotient also has 2 digits
 // will not write to q0 AND q1 if either one is NULL
-bool bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
+// assumes x, y > 0
+void bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
                     bn_digit_t y,
                     uint8_t base,
                     bn_digit_t* q0_out, bn_digit_t* q1_out,
@@ -260,16 +266,16 @@ size_t bnu_print_digit(bn_digit_t digit_value,
                          bool print_leading_zeroes,
                          bool use_uppercase_digits);
 
+// is a digit small enough to fit in a single-digit bignum without any
+// truncation or overflow? in the specified base
+bool bnu_digit_in_range(bn_digit_t digit, uint8_t base);
+
 // is a char a valid digit in the specified base?
 // writes the digit value to value_out if it returns true and value_out != NULL
 bool bnu_digit_valid(char digit, uint8_t base, bn_digit_t* value_out);
 
 // 2 <= base <= 36 ?
 bool bnu_base_valid(uint8_t base);
-
-// is a digit small enough to fit in a single-digit bignum without any
-// truncation or overflow? in the specified base
-bool bnu_digit_in_range(bn_digit_t digit, uint8_t base);
 
 // macros
 

@@ -1,5 +1,26 @@
 #include "apc.h"
 
+Value BinopFn_BaseConv(Value a0, Value b) {
+    if (a0.type != V_NUMBER || b.type != V_NUMBER) {
+        apc_return(E_VALUE_ERROR);
+    }
+
+    if (bni_real_len(&b.number) > 1) {
+        // base out of range
+        apc_return(E_VALUE_ERROR);
+    }
+
+    bn_digit_t base = b.number.digits_end[0];
+
+    Value result = { .type = V_NUMBER };
+    if (!bn_convert(&result.number, &a0.number, base)) {
+        // base out of range
+        apc_return(E_VALUE_ERROR);
+    }
+
+    return result;
+}
+
 // unary operators
 
 // +a0 : Num => Num
@@ -96,3 +117,4 @@ Value BinopFn_Mod(Value a0, Value a1) {
 
     return result;
 }
+

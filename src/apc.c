@@ -20,15 +20,18 @@ void apc_init() {
     // init opdata lookup tables
     runtime.n_unops = 2;
     runtime.unop_data = apc_malloc(runtime.n_unops * sizeof(UnopData));
-    runtime.unop_data[0] = (UnopData){'+', UnopFn_Plus};    runtime.unop_data[1] = (UnopData){'-', UnopFn_Minus};
+    runtime.unop_data[0] = (UnopData){'+', UnopFn_Plus};
+    runtime.unop_data[1] = (UnopData){'-', UnopFn_Minus};
 
-    runtime.n_binops = 5;
+    runtime.n_binops = 6;
     runtime.binop_data = apc_malloc(runtime.n_binops * sizeof(BinopData));
     runtime.binop_data[0] = (BinopData){'+', BinopFn_Add};
     runtime.binop_data[1] = (BinopData){'-', BinopFn_Sub};
     runtime.binop_data[2] = (BinopData){'*', BinopFn_Mul};
     runtime.binop_data[3] = (BinopData){'/', BinopFn_Div};
     runtime.binop_data[4] = (BinopData){'%', BinopFn_Mod};
+    // explicit base _ is not an operator, handled in consume_numlit
+    runtime.binop_data[5] = (BinopData){'#', BinopFn_BaseConv};
 }
 
 void apc_exit(int exit_code) {
@@ -41,6 +44,9 @@ void apc_eval(const char* str) {
     int pid = fork();
     if (pid == 0) {
         // child
+
+        // set error code to something bad in case child exits w/o apc_return
+        *runtime.error_code = E_INTERNAL_ERROR;
 
         runtime.current_input = sv_from(str);
 
@@ -76,16 +82,16 @@ void apc_eval(const char* str) {
         Expr* e = consume_expr();
 
         // eval
-
         Value final_result = eval_expr(e);
 
+        // print
         fputs(" = ", stdout);
 
-        // only print explicit base if not base10
-        // always print in lowercase for now
+        // always print explicit base if not base10
+        // always print in uppercase for now to match python
         bn_print(&final_result.number,
-            final_result.number.base != 10,
-            false);
+            final_result.number.base != BN_BASE_DEFAULT,
+            true);
 
         // done
         *runtime.error_code = E_OK;
@@ -129,7 +135,8 @@ void apc_start_repl() {
     while (1) {
 
         fputs(" = ", stdout);
-        // TODO write custom getline that uses apc_malloc
+        // TODO write custom getline that uses apc_malloc to exit on error
+        // or do specific things when EOF is read
         ssize_t nread = getline(&line, &len, stdin);
 
         if (nread == -1 || line == NULL) {
@@ -256,6 +263,7 @@ bool scan_next_token() {
     else if (c == '*') t.type = T_STAR;
     else if (c == '/') t.type = T_SLASH;
     else if (c == '%') t.type = T_PERCENT;
+    else if (c == '#') t.type = T_CONV;
 
     if (t.type != T_NONE) {
         // advance ptr and write token
@@ -270,7 +278,7 @@ bool scan_next_token() {
     while (runtime.last_index < l) {
         c = s[runtime.last_index];
 
-        if (char_in_string(c, ",()_+-*/%") || isspace(c)) {
+        if (char_in_string(c, ",()_+-*/%#") || isspace(c)) {
             break;
         } else if (!isalnum(c)) {
             apc_return(E_PARSE_ERROR);
@@ -281,10 +289,8 @@ bool scan_next_token() {
     }
 
     // backtrack by 1, to handle this character (either a single char operator
-    // or whitespace) next iteration (unless we've reached the end)
-    if (runtime.last_index < l) {
-        t.atom.len -= 1;
-    }
+    // or whitespace) next iteration
+    t.atom.len -= 1;
 
     // if there was a-zA-Z in the word and it doesn't have explicit base,
     // it's an identifier
@@ -414,13 +420,20 @@ Expr* consume_expr() {
 
     while(runtime.current_token.type == T_PLUS
     || runtime.current_token.type == T_MINUS
-    || runtime.current_token.type == T_PERCENT) {
+    || runtime.current_token.type == T_PERCENT
+    || runtime.current_token.type == T_CONV) {
         op = runtime.current_token;
         if (!parser_next_token()) {
             apc_return(E_PARSE_ERROR);
         }
 
-        term_n = consume_term();
+        // conv requires an explicit base literal afterward
+        if (op.type == T_CONV) {
+            term_n = consume_numlit();
+        } else {
+            term_n = consume_term();
+        }
+
         expr = build_expr_binop(op, expr, term_n);
     }
     return expr;
@@ -428,29 +441,27 @@ Expr* consume_expr() {
 
 Expr* build_expr_num(Token num, const Token* opt_base) {
 
-    // default to base 10
+    Bignum bn = {0};
     uint32_t base = BN_BASE_DEFAULT;
 
     if (opt_base != NULL) {
-        // parse explicit base
-        char* end = NULL;
-        char* temp = bnu_strndup(opt_base->atom.str, opt_base->atom.len);
-        // a base literal must be in base 10
-        unsigned long ul = strtoul(temp, &end, 10);
-        if (end == NULL) {
-            // base failed to parse
+        // try to parse explicit base
+        char* base_str = opt_base->atom.str;
+        size_t base_len = opt_base->atom.len;
+        if (!bnu_parse_digit(base_str, 0, base_len, 10, &base)) {
             apc_return(E_PARSE_ERROR);
         }
-        base = (uint32_t)ul;
+    }
+
+    if (!bn_write3(&bn, num.atom.str, num.atom.len, base)) {
+        apc_return(E_PARSE_ERROR);
     }
 
     Expr* e = expr_new();
     e->type = X_VALUE;
     e->value.type = V_NUMBER;
-    bn_write3(&e->value.number,
-        num.atom.str,
-        num.atom.len,
-        base);
+    e->value.number = bn;
+
     return e;
 }
 

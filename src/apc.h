@@ -151,12 +151,13 @@ typedef enum {
     T_COMMA,    // ,
     T_OPEN,     // (
     T_CLOSE,    // )
-    T_BASE,     // _
-    T_PLUS,     // +
-    T_MINUS,    // -
-    T_STAR,     // *
-    T_SLASH,    // /
-    T_PERCENT,  // %
+    T_BASE,     // _ explicit base operator
+    T_PLUS,     // + addition
+    T_MINUS,    // - subtraction
+    T_STAR,     // * multiplication
+    T_SLASH,    // / division
+    T_PERCENT,  // % modulo
+    T_CONV,     // # base conversion operator
 } TokenType;
 
 typedef struct {
@@ -291,7 +292,7 @@ Expr* consume_expr();
 
 // these constructors never fail or consume any tokens
 
-// if opt_base is NULL it is ignored
+// if opt_base is NULL it defaults to base 10
 Expr* build_expr_num(Token num, const Token* opt_base);
 Expr* build_expr_unop(Token op, Expr* arg);
 Expr* build_expr_binop(Token op, Expr* arg0, Expr* arg1);
@@ -301,6 +302,8 @@ Expr* build_expr_binop(Token op, Expr* arg0, Expr* arg1);
 Value eval_expr(const Expr* e);
 
 // builtins.c
+
+Value BinopFn_BaseConv(Value a0, Value b); // a0 # b
 
 // unary operators
 Value UnopFn_Plus(Value a0); // +a0

@@ -1,7 +1,7 @@
 #include "bignum.h"
 
 // definition: fake_base^width = real_base < UINT32_MAX < fake_base^(width+1)
-const BignumBase bn_bases[BN_BASE_MAX + 1] = {
+const BignumBase BN_BASE[BN_BASE_MAX + 1] = {
     [0]  =                                              {.last_digit="00" },
     [1]  =                                              {.last_digit="00" },
     [2]  = {.fake_base=2,.width=31,.real_base=2147483648,.last_digit="11" },
@@ -58,36 +58,37 @@ const Bignum BN_ONE = {
 };
 
 bool bn_write(Bignum* b, const char* str) {
-    return bni_write_str(b, str, BN_BASE_DEFAULT);
+    return bni_write_str(b, str, strlen(str), BN_BASE_DEFAULT);
 }
 
 bool bn_write2(Bignum* b, const char* str, uint8_t base) {
-    return bni_write_str(b, str, base);
+    return bni_write_str(b, str, strlen(str), base);
 }
 
 bool bn_write3(Bignum* b, const char* str, size_t len, uint8_t base) {
-    char* s2 = bnu_strndup(str, len);
-    bool ok = bni_write_str(b, s2, base);
-#ifndef BN_NOFREE
-    BN_FREE(s2);
-#endif
-    return ok;
+    return bni_write_str(b, str, len, base);
 }
 
 void bn_copy(Bignum* dest, const Bignum* src) {
     bni_copy(dest, src);
 }
 
-void bn_convert(Bignum* dest, const Bignum* src, uint8_t new_base) {
+bool bn_convert(Bignum* dest, const Bignum* src, uint8_t new_base) {
+    if (!bnu_base_valid(new_base)) {
+        return false;
+    }
+
     if (src->base == new_base) {
         bni_copy(dest, src);
     } else {
         bni_convert(dest, src, new_base);
     }
+
+    return true;
 }
 
 size_t bn_print(const Bignum* b, bool print_base, bool use_uppercase) {
-    if (b->digits_end == NULL) {
+    if (b->digits_end == NULL || b->capacity == 0) {
         fputs("(null)", stdout);
         return 6;
     }
@@ -338,12 +339,12 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
     Bignum arg0 = *a0;
     Bignum arg1 = *a1;
 
-    // divmod(x, 0) = divide/mod by zero error
+    // divmod(a0, 0) = divide/mod by zero error
     if (bn_equals_zero(&arg1)) {
         return false;
     }
 
-    // divmod(0, x) = [0, 0]
+    // divmod(0, a0) = [0, 0]
     if (bni_cmp_Nx1(&arg0, 0) == 0) {
         if (result_div != NULL) {
             bni_write_parts1(result_div, 0, 0, arg0.base);
@@ -354,7 +355,7 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
         return true;
     }
 
-    // divmod(x, 1) = [x, 0]
+    // divmod(a0, 1) = [a0, 0]
     if (bni_cmp_Nx1(&arg1, 1) == 0) {
         if (result_div != NULL) {
             bni_copy(result_div, &arg0);
@@ -365,7 +366,7 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
         return true;
     }
 
-    // divmod(x, x) = [1, 0]
+    // divmod(a0, a0) = [1, 0]
     if (bn_cmp(&arg0, &arg1) == 0) {
         if (result_div != NULL) {
             bni_write_parts1(result_div, 0, 1, arg0.base);
@@ -395,7 +396,7 @@ bool bni_is_valid(const Bignum* b) {
     return b != NULL && b->digits_end != NULL;
 }
 
-void bni_realloc(Bignum* out, size_t n_digits, uint8_t base) {
+void bni_freealloc(Bignum* out, size_t n_digits, uint8_t base) {
     bni_try_free(out);
     *out = (Bignum){
         .digits_end = BN_MALLOC(n_digits * sizeof(bn_digit_t)),
@@ -404,6 +405,26 @@ void bni_realloc(Bignum* out, size_t n_digits, uint8_t base) {
     memset(out->digits_end, 0, n_digits * sizeof(bn_digit_t));
     out->msd_pos = 0;
     out->base = base;
+}
+
+void bni_append_zeros(Bignum* out, size_t n) {
+
+    uint64_t new_capacity = out->capacity + n;
+    Bignum result = {
+        .base = out->base,
+        .digits_end = BN_MALLOC(new_capacity * sizeof(bn_digit_t)),
+        .capacity = new_capacity,
+        .signbit = out->signbit
+    };
+    memset(result.digits_end, 0, new_capacity);
+    memcpy(result.digits_end, out->digits_end,
+           out->capacity * sizeof(bn_digit_t));
+
+    // do not bni_normalize(), instead:
+    result.msd_pos = out->msd_pos;
+
+    bni_try_free(out);
+    *out = result;
 }
 
 void bni_copy(Bignum* dest, const Bignum* src) {
@@ -415,8 +436,8 @@ void bni_copy(Bignum* dest, const Bignum* src) {
         .capacity = real_len,
         .signbit = src->signbit
     };
-
-    memcpy(result.digits_end, src->digits_end, real_len * sizeof(bn_digit_t));
+    memcpy(result.digits_end, src->digits_end,
+           real_len * sizeof(bn_digit_t));
 
     bni_try_free(dest);
     *dest = result;
@@ -424,11 +445,42 @@ void bni_copy(Bignum* dest, const Bignum* src) {
 }
 
 void bni_convert(Bignum* dest, const Bignum* src, uint8_t new_base) {
-    Bignum result;
 
-    // bni_try_free(dest);
-    // *dest = result;
-    // bni_normalize(dest);
+    bn_digit_t real_base = BN_BASE[new_base].real_base;
+
+    Bignum result = { .base = new_base };
+
+    Bignum src_copy = {0};
+    bni_copy(&src_copy, src);
+
+    Bignum current_dest_digit = {0};
+
+    while (true) {
+
+        // allocate a new digit in the result
+        bni_append_zeros(&result, 1);
+
+        // if the division result would be zero, src_copy is the final digit
+        if (bni_cmp_Nx1(&src_copy, new_base) == -1) {
+            result.digits_end[result.msd_pos] = src_copy.digits_end[0];
+            result.msd_pos++;
+            break;
+        }
+
+        // src_copy /= real_base
+        // current_dest_digit = src_copy % real_base
+        bni_divqr_Nx1(&src_copy, &current_dest_digit, &src_copy, real_base);
+
+        // append another digit
+        result.digits_end[result.msd_pos] =
+current_dest_digit.digits_end[current_dest_digit.msd_pos];
+        result.msd_pos++;
+    }
+
+    bni_try_free(&src_copy);
+    bni_try_free(dest);
+    *dest = result;
+    bni_normalize(dest);
 }
 
 void bni_try_free(Bignum* out) {
@@ -457,20 +509,9 @@ void bni_normalize(Bignum* out) {
     }
 }
 
-bool bni_write_str(Bignum* out, const char* str, uint8_t base) {
+bool bni_write_str(Bignum* out, const char* str, size_t len, uint8_t base) {
 
-    if (base < BN_BASE_MIN || base > BN_BASE_MAX) {
-        return false;
-    }
-
-    if(str == NULL) {
-        // null string
-        return false;
-    }
-
-    uint32_t len = strlen(str);
-    if (len == 0) {
-        // empty string
+    if (!bnu_base_valid(base) || str == NULL || len == 0) {
         return false;
     }
 
@@ -488,32 +529,15 @@ bool bni_write_str(Bignum* out, const char* str, uint8_t base) {
     }
 
     // must be all valid digits in the specified base
-    for (const char* s = str; *s != '\0'; s++) {
+    for (const char* s = str; s != str + len; s++) {
         if (!bnu_digit_valid(*s, base, NULL)) {
             return false;
         }
     }
 
-    // [-0, 0] => 0
-    // if (!strncmp(str, "0", 1)) {
-    //
-    //     Bignum result = {
-    //         .base = BN_BASE_DEFAULT,
-    //         .digits_end = BN_MALLOC(1 * sizeof(uint32_t)),
-    //         .len = 1,
-    //         .signbit = 0
-    //     };
-    //     result.digits_end[0] = 0;
-    //     result.start = result.digits_end;
-    //
-    //     bni_try_free(out);
-    //     *out = result;
-    //     return true;
-    // }
-
     // how many leading zeroes are needed to round off a full digit?
 
-    uint32_t mp = bn_bases[base].width;
+    uint32_t mp = BN_BASE[base].width;
 
     // avoid wasting space - add 0 bytes if len already rounded off
     uint32_t n_leading_zeroes = (len % mp == 0) ? 0 : (mp - (len % mp));
@@ -548,13 +572,12 @@ bool bni_write_str(Bignum* out, const char* str, uint8_t base) {
     memset(result.digits_end, 0, num_digits * sizeof(uint32_t));
 
     // loop in reverse order
-    // mp characters => 1 digit
-
     uint32_t* dp = &result.digits_end[result.capacity - 1];
     char* sp = new_str;
 
     while (sp < new_str + len) {
 
+        // mp characters => 1 digit
         if (!bnu_parse_digit(sp, 0, mp, base, dp)) {
             // nth digit conversion failed
             bni_try_free(&result);
@@ -584,7 +607,7 @@ bool bni_write_parts1(Bignum* out,
         return false;
     }
 
-    bni_realloc(out, 1, base);
+    bni_freealloc(out, 1, base);
     out->signbit = signbit;
     out->digits_end[0] = d0;
     bni_normalize(out);
@@ -602,7 +625,7 @@ bool bni_write_parts2(Bignum* out,
         return false;
     }
 
-    bni_realloc(out, 2, base);
+    bni_freealloc(out, 2, base);
     out->signbit = signbit;
     out->digits_end[1] = d0;
     out->digits_end[0] = d1;
@@ -631,22 +654,22 @@ void bni_dump(const Bignum* b) {
             "  .capacity=%llu,\n"
             "  rlen=%lu,\n"
             "  .digits=[\n"
-            "    <start>\n",
+            "    <mem_start>\n",
         (unsigned long)b->base,
         (unsigned long)b->signbit,
         (unsigned long long)b->capacity,
         (unsigned long)bni_real_len(b));
 
-        for (uint64_t i = 0; i <= b->capacity; i++) {
+        for (uint64_t i = 0; i < b->capacity; i++) {
             printf(
             "    %0*lu,%s\n",
-            bn_bases[b->base].width,
+            BN_BASE[b->base].width,
             (unsigned long) b->digits_end[i],
             i == b->msd_pos ? " <-- MSD" : "");
         }
 
         printf(
-            "    <end>\n"
+            "    <mem_end>\n"
             "  ]}\n");
     }
 }
@@ -668,7 +691,7 @@ void bni_lshift(Bignum* out, const Bignum* a0, size_t n) {
     size_t new_len = rlen0 + n;
 
     Bignum result = {0};
-    bni_realloc(&result, new_len, a0->base);
+    bni_freealloc(&result, new_len, a0->base);
 
     bn_digit_t* dest = result.digits_end + n;
     bn_digit_t* src = a0->digits_end;
@@ -705,7 +728,7 @@ void bni_rshift(Bignum* out, const Bignum* a0, size_t n) {
     size_t new_len = rlen0 - n;
 
     Bignum result = {0};
-    bni_realloc(&result, new_len, a0->base);
+    bni_freealloc(&result, new_len, a0->base);
 
     bn_digit_t* dest = result.digits_end;
     bn_digit_t* src = a0->digits_end + n;
@@ -751,9 +774,9 @@ void bni_add(Bignum* out, const Bignum* a0, const Bignum* a1) {
 
     Bignum result = {0};
     size_t max_len = 1 + bni_real_len(a0); // +1 for possible carry
-    bni_realloc(&result, max_len, a0->base);
+    bni_freealloc(&result, max_len, a0->base);
 
-    bn_digit_t real_base = bn_bases[result.base].real_base;
+    bn_digit_t real_base = BN_BASE[result.base].real_base;
 
     // LSD -> MSD
     bn_digit_t* d0 = a0->digits_end;
@@ -805,9 +828,9 @@ void bni_sub(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // now assume a0 > a1
 
     Bignum result = {0};
-    bni_realloc(&result, a0->capacity, a0->base);
+    bni_freealloc(&result, a0->capacity, a0->base);
 
-    bn_digit_t real_base = bn_bases[result.base].real_base;
+    bn_digit_t real_base = BN_BASE[result.base].real_base;
 
     // LSD -> MSD
     bn_digit_t* d0 = a0->digits_end;
@@ -859,9 +882,10 @@ void bni_mul(Bignum* out, const Bignum* a0, const Bignum* a1) {
     }
 
     Bignum result = {0};
-    bni_realloc(&result, bni_real_len(a0) + 1 + bni_real_len(a1) + 1, a0->base);
+    bni_freealloc(&result, bni_real_len(a0) + 1 + bni_real_len(a1) + 1,
+a0->base);
 
-    bn_digit_t real_base = bn_bases[result.base].real_base;
+    bn_digit_t real_base = BN_BASE[result.base].real_base;
     bn_digit_t* r_ptr = result.digits_end;
 
     for (bn_digit_t* d0 = a0->digits_end; d0 <= &a0->digits_end[a0->msd_pos];
@@ -892,19 +916,19 @@ d0++)
 
 void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
                 const Bignum* a0,
-                size_t a1)
+                bn_digit_t a1)
 {
     // naive algorithm - optimize later
 
     Bignum q_result = {0};
     if (q_out != NULL) {
-        bni_realloc(&q_result, bni_real_len(a0) + 1, a0->base);
+        bni_freealloc(&q_result, bni_real_len(a0) + 1, a0->base);
     }
 
     // remainder is always 1 digit
     Bignum r_result = {0};
     if (r_out != NULL) {
-        bni_realloc(&r_result, 1, a0->base);
+        bni_freealloc(&r_result, 1, a0->base);
     }
 
     if (q_result.capacity == 2) {
@@ -925,11 +949,9 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
         // 3x1 or more - do it in 2x1 steps
 
         // prepend with a zero
-
-        Bignum arg0 = { .capacity = bni_real_len(a0) + 1 };
-        bni_realloc(&arg0, arg0.capacity, a0->base);
-        memcpy(arg0.digits_end, a0->digits_end,
-               arg0.capacity * sizeof(bn_digit_t));
+        Bignum arg0 = {0};
+        bni_copy(&arg0, a0);
+        bni_append_zeros(&arg0, 1);
 
         // {d_0}{d_1}{d_2}...{d_n} /% D
         // take 2 digits at a time:
@@ -952,13 +974,13 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
 
         // current two digits
         Bignum ctd = {0};
-        bni_realloc(&ctd, 2, arg0.base);
+        bni_freealloc(&ctd, 2, arg0.base);
 
         while (i >= 0) {
 
             // ctd = {r_n-1}{d_n}
-            // ctd.digits_end[1] = 0;
-            // ctd.digits_end[0] = arg0.digits_end[i];
+            // ctd.digits_end[0] = cr;
+            // ctd.digits_end[1] = arg0.digits_end[i];
             // ctd.msd_pos = 1;
             bni_write_parts2(&ctd, 0, cr, arg0.digits_end[i], arg0.base);
 
@@ -1018,38 +1040,30 @@ char* bnu_strndup(const char* str, size_t n) {
     return dup;
 }
 
-bool bnu_divqr_1x1(bn_digit_t x,
+void bnu_divqr_1x1(bn_digit_t x,
                     bn_digit_t y,
                     bn_digit_t* q_out, bn_digit_t* r_out)
 {
-    // divide by zero error
-    if (y == 0) {
-        return false;
-    }
+
     if (q_out != NULL) {
         *q_out = x / y;
     }
     if (r_out != NULL) {
         *r_out = x % y;
     }
-    return true;
 }
 
-bool bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
+void bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
                     bn_digit_t y,
                     uint8_t base,
                     bn_digit_t* q0_out, bn_digit_t* q1_out,
                     bn_digit_t* r_out)
 {
-    // divide by zero error
-    if (y == 0) {
-        return false;
-    }
 
     uint64_t x0_64 = x0;
     uint64_t x1_64 = x1;
     uint64_t y_64 = y;
-    uint64_t real_base_64 = bn_bases[base].real_base;
+    uint64_t real_base_64 = BN_BASE[base].real_base;
 
     uint64_t x_64 = (x0_64 * real_base_64) + x1_64;
 
@@ -1063,7 +1077,6 @@ bool bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
         uint64_t remainder = x_64 % y_64;
         *r_out = (bn_digit_t)remainder;
     }
-    return true;
 }
 
 // false => conversion error
@@ -1075,7 +1088,7 @@ bool bnu_parse_digit(const char* str,
                     bn_digit_t* out)
 {
 
-    if (end - start > bn_bases[base].width) {
+    if (end - start > BN_BASE[base].width) {
         return false;
     }
 
@@ -1110,7 +1123,7 @@ size_t bnu_print_digit(bn_digit_t digit_value,
         d /= base;
         n += 1;
     }
-    size_t n_digits = bn_bases[base].width - n;
+    size_t n_digits = BN_BASE[base].width - n;
 
     size_t nc = 0;
 
@@ -1126,12 +1139,16 @@ size_t bnu_print_digit(bn_digit_t digit_value,
             base, false, use_uppercase_digits);
     }
 
-    // +1 because bn_bases is zero indexed
+    // +1 because BN_BASE is zero indexed
     bn_digit_t adjusted_dv = 1 + (digit_value % base);
-    fputc(bn_bases[adjusted_dv].last_digit[use_uppercase_digits], stdout);
+    fputc(BN_BASE[adjusted_dv].last_digit[use_uppercase_digits], stdout);
     nc += 1;
 
     return nc;
+}
+
+bool bnu_digit_in_range(bn_digit_t digit, uint8_t base) {
+    return digit < BN_BASE[base].real_base;
 }
 
 bool bnu_digit_valid(char digit, uint8_t base, bn_digit_t* out) {
@@ -1144,8 +1161,8 @@ bool bnu_digit_valid(char digit, uint8_t base, bn_digit_t* out) {
     }
 
     for (size_t i = 1; i <= base; i++) {
-        if (digit == bn_bases[i].last_digit[0]
-        || digit == bn_bases[i].last_digit[1]) {
+        if (digit == BN_BASE[i].last_digit[0]
+        || digit == BN_BASE[i].last_digit[1]) {
             if (out != NULL) {
                 *out = i;
             }
@@ -1156,9 +1173,5 @@ bool bnu_digit_valid(char digit, uint8_t base, bn_digit_t* out) {
 }
 
 bool bnu_base_valid(uint8_t base) {
-    return 2 <= base && base <= 36;
-}
-
-bool bnu_digit_in_range(bn_digit_t digit, uint8_t base) {
-    return digit < bn_bases[base].real_base;
+    return BN_BASE_MIN <= base && base <= BN_BASE_MAX;
 }

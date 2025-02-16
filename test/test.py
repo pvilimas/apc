@@ -7,6 +7,7 @@ import random
 from random import randint
 import subprocess
 from dataclasses import dataclass
+import numpy
 
 N = 1000
 DIGITS = "0123456789abcdefghjiklmnopqrstuvwxyz"
@@ -31,87 +32,58 @@ class Expr:
     py_expr: str
     apc_expr: str
 
-    def __init__(self, p, a):
+    def __init__(self, p, a=None):
         self.py_expr = p
-        self.apc_expr = a
+        self.apc_expr = a or p
 
-def random_number() -> int:
-    return randint(1,10**32)
+    def add(self, e):
+        return Expr(f"{self.py_expr} + {e.py_expr}",
+                    f"{self.apc_expr} + {e.apc_expr}")
 
-def random_expr() -> Expr:
-    r1 = randint(0, 5)
-    if r1 <= 2:
-        # X_VALUE, V_NUMBER
+    def sub(self, e):
+        return Expr(f"{self.py_expr} - {e.py_expr}",
+                    f"{self.apc_expr} - {e.apc_expr}")
 
-        # base
-        r2 = randint(2,36)
-        allowed_digits = DIGITS[0:r2-1]
+    def mul(self, e):
+        return Expr(f"{self.py_expr} * {e.py_expr}",
+                    f"{self.apc_expr} * {e.apc_expr}")
 
-        # num digits
-        r3 = randint(1, 35)
+    def intdiv(self, e):
+        return Expr(f"{self.py_expr} // {e.py_expr}",
+                    f"{self.apc_expr} / {e.apc_expr}")
 
-        s = ""
-        for i in range(r3):
-            s += random.choice(allowed_digits)
+    def mod(self, e):
+        return Expr(f"{self.py_expr} % {e.py_expr}",
+                    f"{self.apc_expr} % {e.apc_expr}")
 
-        # sign
-        r4 = randint(0, 1)
-        if r4:
-            s = f"-{s}"
+def random_bignum() -> Expr:
+    return Expr(str(randint(1, 10**randint(1,50))))
 
-        apc_s = f"{s}_{r2}"
-        return Expr(str(int(s,r2)), apc_s)
-    elif r1 == 3:
-        # X_UNOP
+def random_bigstr(base: int) -> str:
+    all_digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    valid_digits = all_digits[0:base]
+    l = random.choices(valid_digits, k=randint(1,50))
+    s = "".join(l)
+    return s
 
-        # operation
-        r2 = randint(0, 1)
-        re0 = random_expr()
+def random_digit() -> Expr:
+    return Expr(str(randint(1, 10**randint(1,5))))
 
-        op = "+-"[r2]
-        e = Expr(f"{re0.py_expr}", f"{re0.apc_expr}")
-
-        # explicit parens
-        r3 = randint(0, 1)
-        if r3:
-            e = Expr(f"({e.py_expr})", f"({e.apc_expr})")
-        e = Expr(f"{op}{e.py_expr}", f"{op}{e.apc_expr}")
-        return e
-
-    elif r1 >= 4:
-        # X_BINOP
-
-        # operation
-        r2 = randint(0, 3)
-        re0 = random_expr()
-        re1 = random_expr()
-        if r2 == 0:
-            return Expr(f"{re0.py_expr} + {re1.py_expr}", f"{re0.apc_expr} + {re1.apc_expr}")
-        elif r2 == 1:
-            return Expr(f"{re0.py_expr} - {re1.py_expr}", f"{re0.apc_expr} - {re1.apc_expr}")
-        elif r2 == 2:
-
-            # multiplication form
-            r3 = randint(0, 3)
-
-            # TODO
-            r3 = 3
-
-            return Expr(
-                f"{re0.py_expr} * {re1.py_expr}",
-                    [f"{re0.apc_expr}({re1.apc_expr})",
-                    f"({re0.apc_expr})({re1.apc_expr})",
-                    f"({re0.apc_expr}){re1.apc_expr}",
-                    f"{re0.apc_expr} * {re1.apc_expr}"][r3])
-        elif r2 == 3:
-            return Expr(f"{re0.py_expr} / {re1.py_expr}",
-                        f"{re0.apc_expr} / {re1.apc_expr}")
+# a single operation
+def random_short_expr():
+    return random.choices([
+            random_bignum().add(random_bignum()),
+            random_bignum().sub(random_bignum()),
+            random_bignum().mul(random_bignum()),
+            random_bignum().intdiv(random_digit()),
+            random_bignum().mod(random_digit()),
+        ], weights=[1,1,1,4,3], k=1)[0]
 
 def run_test_apc():
     passed = 0
 
     for i in range(N):
-        e = random_expr()
+        e = random_short_expr()
 
         py_answer = str(eval(e.py_expr))
         apc_answer = test_apc(e.apc_expr)
@@ -119,29 +91,31 @@ def run_test_apc():
 
         if py_answer == apc_answer:
             passed += 1
-        else:
+        # else:
             print(f"{e.apc_expr=}\n"
                 f"{py_answer=}\n"
                 f"{apc_answer=}\n")
 
     print(f"passed {passed} / {N}")
 
-def run_test_apc_div():
+def base(num,b,numerals="0123456789abcdefghijklmnopqrstuvwxyz"):
+    return ((num == 0) and numerals[0]) or (baseN(num // b, b,
+        numerals).lstrip(numerals[0]) + numerals[num % b])
+
+def run_test_apc_base_conv():
     passed = 0
 
     for i in range(N):
 
-        x = randint(1,10) * 10**randint(10,20)
-        y = randint(1,10)
+        b0 = randint(2,36)
+        num_str = random_bigstr(b0)
+        num_int = int(num_str, b0)
+        b1 = randint(2,36)
 
-        if y == 0:
-            continue
+        apc_expr = f"{num_str}_{b0} # {b1}"
 
-        py_expr = f"{x} // {y}"
-        apc_expr = f"{x} / {y}"
-
-        py_answer = str(eval(py_expr))
-        apc_answer = test_apc(apc_expr).strip('\n')
+        py_answer = f"{numpy.base_repr(num_int, base=b1)}"
+        apc_answer = test_apc(apc_expr).strip('\n').split("_")[0]
 
         if py_answer == apc_answer:
             passed += 1
@@ -152,7 +126,7 @@ def run_test_apc_div():
     print(f"passed {passed} / {N}")
 
 def main():
-    run_test_apc_div()
+    run_test_apc_base_conv()
 
 if __name__ == '__main__':
     main()
