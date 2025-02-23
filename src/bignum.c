@@ -57,6 +57,18 @@ const Bignum* BN_ONE = &(const Bignum){
     .capacity = 1
 };
 
+// config
+
+BignumConfig BN_CONFIG = {
+    .letter_print_case = BC_LPC_LOWERCASE,
+    .explicit_base = BC_EB_NOT_DEFAULT,
+    .base_coercion_mode = BC_BCM_FIRST,
+    .no_free = BC_NF_DISABLED,
+    .malloc_hook = malloc,
+    .realloc_hook = realloc,
+    .free_hook = free
+};
+
 // constructors and io
 
 bool bn_write(Bignum* b, const char* str) {
@@ -85,22 +97,24 @@ bool bn_convert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
         return true;
     }
 
-    // special case: convert to a greater base?
+    // TODO - optimization where real_base is the same?
+    // would happen inside bni_convert
 
-    uint32_t rb_old = BN_BASE[src->base].real_base;
-    uint32_t rb_new = BN_BASE[new_base].real_base;
-
-    if (rb_new < rb_old) {
-        bni_lconvert(dest, src, new_base);
-        return true;
-    }
-
-    bni_lconvert(dest, src, new_base);
+    // convert to the new base
+    bni_convert(dest, src, new_base);
+    dest->signbit = src->signbit;
     return true;
 }
 
 size_t bn_print(const Bignum* b) {
-    return bni_print(b, b->base != BN_BASE_DEFAULT, BN_PRINT_LOWERCASE);
+
+    bool explicit_base = (BN_CONFIG.explicit_base == BC_EB_ALWAYS)
+    || (BN_CONFIG.explicit_base == BC_EB_NOT_DEFAULT
+        && b->base != BN_BASE_DEFAULT);
+
+    bool use_uppercase = (BN_CONFIG.letter_print_case == BC_LPC_UPPERCASE);
+
+    return bni_print(b, explicit_base, use_uppercase);
 }
 
 size_t bn_print2(const Bignum* b, bool explicit_base, bool use_uppercase) {
@@ -118,14 +132,18 @@ bool bn_equals_zero(const Bignum* a0) {
     return (a0->digits_end[a0->msd_pos] == 0);
 }
 
-
 int bn_cmp(const Bignum* a0, const Bignum* a1) {
+
+    Bignum arg0 = {0};
+    Bignum arg1 = {0};
+
+    bni_handle_bcm(&arg0, &arg1, a0, a1);
 
     if (bn_equals_zero(a0) && bn_equals_zero(a1)) {
         return 0;
     }
 
-    return bni_cmp_NxM(a0, a1);
+    return bni_cmp_NxM(&arg0, &arg1);
 }
 
 // operations
@@ -137,7 +155,7 @@ void bn_neg(Bignum* result, const Bignum* a0) {
 
     // -0 => 0
     if (bn_equals_zero(&arg0)) {
-        bni_copy(result, &arg0);
+        bni_write_parts1(result, 0, 0, a0->base);
         return;
     }
 
@@ -147,8 +165,10 @@ void bn_neg(Bignum* result, const Bignum* a0) {
 
 void bn_add(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
-    Bignum arg0 = *a0;
-    Bignum arg1 = *a1;
+    Bignum arg0 = {0};
+    Bignum arg1 = {0};
+
+    bni_handle_bcm(&arg0, &arg1, a0, a1);
 
     // 0 + a1 => a1
     if (bn_equals_zero(&arg0)) {
@@ -191,8 +211,10 @@ void bn_add(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
 void bn_sub(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
-    Bignum arg0 = *a0;
-    Bignum arg1 = *a1;
+    Bignum arg0 = {0};
+    Bignum arg1 = {0};
+
+    bni_handle_bcm(&arg0, &arg1, a0, a1);
 
     // 0 - a1 => -a1
     if (bn_equals_zero(&arg0)) {
@@ -244,8 +266,10 @@ void bn_sub(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
 void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
-    Bignum arg0 = *a0;
-    Bignum arg1 = *a1;
+    Bignum arg0 = {0};
+    Bignum arg1 = {0};
+
+    bni_handle_bcm(&arg0, &arg1, a0, a1);
 
     // a0 * 0 => 0
     // 0 * a1 => 0
@@ -279,7 +303,7 @@ void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
     }
 
     // compute a0 * a1
-    bni_mul(result, a0, a1);
+    bni_mul(result, &arg0, &arg1);
 }
 
 bool bn_divmod(Bignum* result_div, Bignum* result_mod,
@@ -287,8 +311,10 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
             const Bignum* a1)
 {
 
-    Bignum arg0 = *a0;
-    Bignum arg1 = *a1;
+    Bignum arg0 = {0};
+    Bignum arg1 = {0};
+
+    bni_handle_bcm(&arg0, &arg1, a0, a1);
 
     // divmod(a0, 0) => divide/mod by zero error
     if (bn_equals_zero(&arg1)) {
@@ -408,7 +434,7 @@ void bni_copy(Bignum* dest, const Bignum* src) {
     bni_normalize(dest);
 }
 
-void bni_lconvert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
+void bni_convert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
 
     bn_digit_t real_base = BN_BASE[new_base].real_base;
 
@@ -417,7 +443,8 @@ void bni_lconvert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
     Bignum src_copy = {0};
     bni_copy(&src_copy, src);
 
-    Bignum current_dest_digit = {0};
+    // current dest digit
+    Bignum cdd = {0};
 
     while (true) {
 
@@ -431,13 +458,13 @@ void bni_lconvert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
             break;
         }
 
-        // src_copy /= real_base
-        // current_dest_digit = src_copy % real_base
-        bni_divqr_Nx1(&src_copy, &current_dest_digit, &src_copy, real_base);
+        // src_copy = src_copy / real_base
+        // cdd = src_copy % real_base
+        bni_divqr_Nx1(&src_copy, &cdd,
+                      &src_copy, real_base);
 
         // append another digit
-        result.digits_end[result.msd_pos] =
-current_dest_digit.digits_end[current_dest_digit.msd_pos];
+        result.digits_end[result.msd_pos] = cdd.digits_end[cdd.msd_pos];
         result.msd_pos++;
     }
 
@@ -447,13 +474,45 @@ current_dest_digit.digits_end[current_dest_digit.msd_pos];
     bni_normalize(dest);
 }
 
+void bni_handle_bcm(Bignum* first_out, Bignum* last_out,
+                    const Bignum* first, const Bignum* last)
+{
+    // same base?
+
+    if (first->base == last->base) {
+        bni_copy(first_out, first);
+        bni_copy(last_out, last);
+        return;
+    }
+
+    // different bases
+
+    if (BN_CONFIG.base_coercion_mode == BC_BCM_FIRST) {
+        bni_copy(first_out, first);
+        bni_convert(last_out, last, first->base);
+        return;
+    }
+
+    if (BN_CONFIG.base_coercion_mode == BC_BCM_LAST) {
+        bni_convert(first_out, first, last->base);
+        bni_copy(last_out, last);
+        return;
+    }
+
+    if (BN_CONFIG.base_coercion_mode == BC_BCM_DEFAULT) {
+        bni_convert(first_out, first, BN_BASE_DEFAULT);
+        bni_convert(last_out, last, BN_BASE_DEFAULT);
+        return;
+    }
+}
+
 void bni_try_free(Bignum* out) {
     if (!bni_is_valid(out)) {
         return;
     }
-#ifndef BN_NOFREE
-    BN_FREE(out->digits_end);
-#endif
+    if (BN_CONFIG.no_free == BC_NF_DISABLED) {
+        BN_FREE(out->digits_end);
+    }
     *out = (Bignum){0};
 }
 
@@ -552,9 +611,9 @@ bool bni_write_str(Bignum* out, const char* str, size_t len, bn_base_t base) {
         dp -= 1;
     }
 
-#ifndef BN_NOFREE
-    BN_FREE(new_str);
-#endif
+    if (BN_CONFIG.no_free == BC_NF_DISABLED) {
+        BN_FREE(new_str);
+    }
 
     bni_try_free(out);
     *out = result;
@@ -798,11 +857,6 @@ void bni_neg(Bignum* out, const Bignum* a0) {
 void bni_add(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // carry algorithm
 
-    if (a0->base != a1->base) {
-        printf("bases do not match!!\n");
-        return;
-    }
-
     // swap the numbers such that a0->len >= a1->len
     // this makes computation simpler in the loop
     // also guarantees `max(len0, len1) == len0`
@@ -852,11 +906,6 @@ void bni_add(Bignum* out, const Bignum* a0, const Bignum* a1) {
 
 void bni_sub(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // borrow algorithm
-
-    if (a0->base != a1->base) {
-        printf("bases do not match!!\n");
-        return;
-    }
 
     // a0 < a1 => -(a1 - a0)
     if (bn_cmp(a0, a1) == -1) {
@@ -915,11 +964,6 @@ void bni_sub(Bignum* out, const Bignum* a0, const Bignum* a1) {
 
 void bni_mul(Bignum* out, const Bignum* a0, const Bignum* a1) {
     // naive algorithm - optimize later
-
-    if (a0->base != a1->base) {
-        printf("bases do not match!!\n");
-        return;
-    }
 
     Bignum result = {0};
     bni_freealloc(&result, bni_real_len(a0) + 1 + bni_real_len(a1) + 1,
@@ -1272,9 +1316,9 @@ bool bnu_parse_digit(const char* str,
 
     char* b_end = NULL;
     unsigned long ul = strtoul(b, &b_end, base);
-#ifndef BN_NOFREE
-    BN_FREE(b);
-#endif
+    if (BN_CONFIG.no_free == BC_NF_DISABLED) {
+        BN_FREE(b);
+    }
 
     if (b_end == NULL) {
         return false;

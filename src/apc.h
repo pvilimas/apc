@@ -8,7 +8,6 @@
 
 #include "memory.h"
 
-#define BN_NOFREE
 #include "bignum.h"
 
 // apc.h - arbitrary-precision calculator shell command
@@ -121,11 +120,16 @@ typedef struct Value {
     };
 } Value;
 
-// unary and binary operators
-// all operators are loaded at runtime
+// unary and binary operators, functions - loaded at runtime
+
+typedef struct {
+    Value* args;
+    int64_t n_args; // -1 means any number of arguments
+} FuncArgs;
 
 typedef Value (*UnopFn)(Value);
 typedef Value (*BinopFn)(Value, Value);
+typedef Value (*FuncFn)(FuncArgs);
 
 typedef struct {
     char name;
@@ -137,10 +141,16 @@ typedef struct {
     BinopFn fn;
 } BinopData;
 
-// search runtime opdata
-// these return null if name is not found
-UnopData* get_unop(char name);
-BinopData* get_binop(char name);
+typedef struct {
+    const char* name;
+    FuncFn fn;
+    int64_t expected_n_args; // -1 means any number of arguments
+} FuncData;
+
+// search runtime data - these return null if name is not found
+UnopData* rt_get_unop(char name);
+BinopData* rt_get_binop(char name);
+FuncData* rt_get_func(const char* name);
 
 // token
 
@@ -303,8 +313,6 @@ Value eval_expr(const Expr* e);
 
 // builtins.c
 
-Value BinopFn_BaseConv(Value a0, Value b); // a0 # b
-
 // unary operators
 Value UnopFn_Plus(Value a0); // +a0
 Value UnopFn_Minus(Value a0); // -a0
@@ -315,6 +323,7 @@ Value BinopFn_Sub(Value a0, Value a1); // a0 + a1
 Value BinopFn_Mul(Value a0, Value a1); // a0 * a1
 Value BinopFn_Div(Value a0, Value a1); // a0 / a1
 Value BinopFn_Mod(Value a0, Value a1); // a0 % a1
+Value BinopFn_BaseConv(Value a0, Value b); // a0 # b
 
 // utils.c
 

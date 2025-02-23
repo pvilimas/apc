@@ -32,6 +32,12 @@ void apc_init() {
     runtime.binop_data[4] = (BinopData){'%', BinopFn_Mod};
     // explicit base _ is not an operator, handled in consume_numlit
     runtime.binop_data[5] = (BinopData){'#', BinopFn_BaseConv};
+
+    // init bignum library stuff
+    BN_CONFIG.no_free = BC_NF_ENABLED;
+    BN_CONFIG.malloc_hook = apc_malloc;
+    BN_CONFIG.realloc_hook = apc_realloc;
+    BN_CONFIG.free_hook = apc_free;
 }
 
 void apc_exit(int exit_code) {
@@ -187,7 +193,7 @@ stringbuffer sb_copy(const stringbuffer* sb) {
     return sb2;
 }
 
-UnopData* get_unop(char name) {
+UnopData* rt_get_unop(char name) {
     for (size_t i = 0; i < runtime.n_unops; i++) {
         if (name == runtime.unop_data[i].name) {
             return &runtime.unop_data[i];
@@ -196,7 +202,7 @@ UnopData* get_unop(char name) {
     return NULL;
 }
 
-BinopData* get_binop(char name) {
+BinopData* rt_get_binop(char name) {
     for (size_t i = 0; i < runtime.n_binops; i++) {
         if (name == runtime.binop_data[i].name) {
             return &runtime.binop_data[i];
@@ -468,7 +474,7 @@ Expr* build_expr_num(Token num, const Token* opt_base) {
 Expr* build_expr_unop(Token op, Expr* arg) {
     Expr* e = expr_new();
     e->type = X_UNOP;
-    e->unop.data = get_unop(op.atom.str[0]);
+    e->unop.data = rt_get_unop(op.atom.str[0]);
     e->unop.arg = arg;
     return e;
 }
@@ -476,7 +482,7 @@ Expr* build_expr_unop(Token op, Expr* arg) {
 Expr* build_expr_binop(Token op, Expr* arg0, Expr* arg1) {
     Expr* e = expr_new();
     e->type = X_BINOP;
-    e->binop.data = get_binop(op.atom.str[0]);
+    e->binop.data = rt_get_binop(op.atom.str[0]);
     e->binop.arg0 = arg0;
     e->binop.arg1 = arg1;
     return e;

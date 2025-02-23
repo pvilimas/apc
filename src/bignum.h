@@ -49,24 +49,50 @@ extern const BignumBase BN_BASE[BN_BASE_MAX + 1];
 extern const Bignum* BN_ZERO;
 extern const Bignum* BN_ONE;
 
-// if this is defined, the library will not free any memory:
-// #define BN_NOFREE
-// (apc.h uses this - all memory is freed on subprocess exit)
+// library-wide config + options
+// the first item in each config enum is the default setting
 
-// optional custom memory functions
-// !!! SETTING THESE DOES NOT WORK RIGHT NOW !!!
-// TODO figure out how to make this work
-#ifndef BN_MALLOC
-#define BN_MALLOC malloc
-#endif
+/* for numbers that have letters as digits, what base to print those in? */
+typedef enum {
+    BC_LPC_LOWERCASE,
+    BC_LPC_UPPERCASE
+} BC_LetterPrintCase;
 
-#ifndef BN_REALLOC
-#define BN_REALLOC realloc
-#endif
+/* when to print explicit base like 7fff_16 */
+typedef enum {
+    BC_EB_NOT_DEFAULT,  // print if base is not BN_BASE_DEFAULT (10)
+    BC_EB_ALWAYS,       // always print it
+    BC_EB_NEVER         // never print it
+} BC_ExplicitBase;
 
-#ifndef BN_FREE
-#define BN_FREE free
-#endif
+/* base coercion mode - specifies the resulting base of an operation when 2
+ or more operands have different bases */
+typedef enum {
+    BC_BCM_FIRST,    // result base = the base of the first operand
+    BC_BCM_LAST,     // result base = base of the last operand
+    BC_BCM_DEFAULT   // result base = BN_BASE_DEFAULT (10)
+} BC_BaseCoercionMode;
+
+/* nofree - if this is enabled, do not attempt to free any memory ever (useful
+if you want to free everything on exit) */
+typedef enum {
+    BC_NF_DISABLED,
+    BC_NF_ENABLED
+} BC_NoFree;
+
+typedef struct {
+    BC_LetterPrintCase letter_print_case;
+    BC_ExplicitBase explicit_base;
+    BC_BaseCoercionMode base_coercion_mode;
+    BC_NoFree no_free;
+
+    // memory functions that can be modified at runtime
+    void* (*malloc_hook)(size_t);
+    void* (*realloc_hook)(void*, size_t);
+    void  (*free_hook)(void*);
+} BignumConfig;
+
+extern BignumConfig BN_CONFIG;
 
 // constructors and io
 
@@ -98,13 +124,10 @@ bool bn_convert(Bignum* dest, const Bignum* src, bn_base_t new_base);
 #define BN_PRINT_LOWERCASE 0
 #define BN_PRINT_UPPERCASE 1
 
-// print a bignum to the console with default settings:
-// - any A-Z digits are in lowercase
-// - explicit base is printed if base != 10
-// returns # of characters written
+// print a bignum to the console with current config settings
 size_t bn_print(const Bignum* b);
 
-// print a bignum to the console w/ more options
+// print a bignum to the console w/ more options, overriding config
 // returns # of characters written
 size_t bn_print2(const Bignum* b, bool explicit_base, bool use_uppercase);
 
@@ -173,17 +196,14 @@ void bni_append_zeros(Bignum* out, size_t n);
 // create a deep copy of src in dest
 void bni_copy(Bignum* dest, const Bignum* src);
 
-// copy src to dest, converting to a lower REAL base
+// copy src to dest, converting to a different base
 // assume new_base in [2,36], != old_base
-// assume new_base.real < old_base.real
 // never fails
-void bni_lconvert(Bignum* dest, const Bignum* src, bn_base_t new_base);
+void bni_convert(Bignum* dest, const Bignum* src, bn_base_t new_base);
 
-// copy src to dest, converting to a greater REAL base
-// assume new_base in [2,36], != old_base
-// assume new_base.real > old_base.real
-// never fails
-void bni_gconvert(Bignum* dest, const Bignum* src, bn_base_t new_base);
+// convert base of two arguments based on value of BN_CONFIG.base_coercion_mode
+void bni_handle_bcm(Bignum* first_out, Bignum* last_out,
+                    const Bignum* first, const Bignum* last);
 
 // free a single bignum (unless #ifdef BN_NOFREE) and set it to {0}
 void bni_try_free(Bignum* out);
@@ -225,11 +245,11 @@ int bni_cmp_Nx1(const Bignum* a0, bn_digit_t a1);
 // assumes bases match
 int bni_cmp_NxM(const Bignum* a0, const Bignum* a1);
 
-// out = a0 << n (in base a1->base.real_base)
+// out = a0 << n (in base a0->base.real_base)
 // assumes n > 0, ignores sign
 void bni_lshift(Bignum* out, const Bignum* a0, size_t n);
 
-// out = a0 >> n (in base a1->base.real_base)
+// out = a0 >> n (in base a0->base.real_base)
 // assumes n > 0, ignores sign
 void bni_rshift(Bignum* out, const Bignum* a0, size_t n);
 
@@ -331,6 +351,10 @@ bool bnu_digit_valid(char digit, bn_base_t base, bn_digit_t* value_out);
 bool bnu_base_valid(bn_base_t base);
 
 // macros
+
+#define BN_MALLOC BN_CONFIG.malloc_hook
+#define BN_REALLOC BN_CONFIG.realloc_hook
+#define BN_FREE BN_CONFIG.free_hook
 
 #undef bn_init
 #define bn_init(...) \

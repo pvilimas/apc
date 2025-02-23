@@ -8,9 +8,9 @@ Currently supports:
 - Arbitrary precision arithmetic
 - Numbers are stored in any base from 2-36
 - Explicit base operator `_`
+- Base conversion operator `#`
 
 Will support:
-- Base conversion operator `#`
 - Digit separator `'`
 - Identifiers and variable assignment
 - More operations

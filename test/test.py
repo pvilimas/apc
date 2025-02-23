@@ -94,15 +94,20 @@ class Expr:
         return Expr(f"{self.py_expr} % {e.py_expr}",
                     f"{self.apc_expr} % {e.apc_expr}")
 
-def random_bignum() -> Expr:
-    return Expr(str(randint(1, 10**randint(1,50))))
-
-def random_bigstr(base: int, n_digits: int = 50) -> str:
+def random_bigstr(base: int, n_digits: int = 100) -> str:
     all_digits = "0123456789abcdefghijklmnopqrstuvwxyz"
     valid_digits = all_digits[0:base]
-    l = random.choices(valid_digits, k=n_digits)
+    l = random.choices(valid_digits, k=n_digits-1)
     s = "".join(l)
+    s = s.lstrip("0")
+    s = random.choice(valid_digits[1:]) + s
     return s
+
+def random_bignum() -> Expr:
+    base = randint(2,36)
+    nd = randint(1,100)
+    s = random_bigstr(base,nd)
+    return Expr(f"int(\"{s}\", {base})", f"{s}_{base}")
 
 def random_digit() -> Expr:
     return Expr(str(randint(1, 10**randint(1,8))))
@@ -122,6 +127,7 @@ def run_test_apc():
 
     for i in range(N):
         e = random_short_expr()
+        e.apc_expr = f"({e.apc_expr}) # 10"
 
         py_answer = str(eval(e.py_expr))
         apc_answer = test_apc(e.apc_expr)
@@ -149,15 +155,14 @@ def run_test_apc_base_conv():
         for b1 in range(2,37):
             if b0 == b1:
                 continue
-            # b0, b1 = 6, 3
-            if BASES[b0][REAL] > BASES[b1][REAL]:
-                print('[old>new] ', end="")
-            elif BASES[b0][REAL] < BASES[b1][REAL]:
-                print('[old<new] ', end="")
-            else:
-                print('[old=new] ', end="")
+            # if BASES[b0][REAL] > BASES[b1][REAL]:
+            #     print('[old>new] ', end="")
+            # elif BASES[b0][REAL] < BASES[b1][REAL]:
+            #     print('[old<new] ', end="")
+            # else:
+            #     print('[old=new] ', end="")
             for i in range(N):
-                num_str = random_bigstr(b0)
+                num_str = random_bigstr(b0, n_digits = 100)
                 num_int = int(num_str, b0)
 
                 apc_expr = f"{num_str}_{b0} # {b1}"
@@ -167,7 +172,7 @@ def run_test_apc_base_conv():
 
                 if py_answer == apc_answer:
                     passed += 1
-                else:
+                # else:
                     ...
                     print(f"{apc_expr=  }\n"
                         f"{py_answer= }\n"
