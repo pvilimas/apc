@@ -89,9 +89,9 @@ void apc_eval(const char* str) {
 
         // always print explicit base if not base10
         // always print in uppercase for now to match python
-        bn_print(&final_result.number,
+        bn_print2(&final_result.number,
             final_result.number.base != BN_BASE_DEFAULT,
-            true);
+            BN_PRINT_UPPERCASE);
 
         // done
         *runtime.error_code = E_OK;
@@ -208,7 +208,7 @@ BinopData* get_binop(char name) {
 void expr_print(const Expr* e) {
     if (e->type == X_VALUE) {
         fputs("Value{", stdout);
-        bn_print(&e->value.number, true, false);
+        bn_print2(&e->value.number, true, false);
         fputc('}', stdout);
     } else if (e->type == X_UNOP) {
         printf("Unop{%c, ", e->unop.data->name);

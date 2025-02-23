@@ -41,7 +41,7 @@ const BignumBase BN_BASE[BN_BASE_MAX + 1] = {
     [36] = {           36,      6,            2176782336,            "zZ" },
 };
 
-const Bignum BN_ZERO = {
+const Bignum* BN_ZERO = &(const Bignum){
     .base = BN_BASE_DEFAULT,
     .signbit = 0,
     .digits_end = (bn_digit_t[1]){0},
@@ -49,7 +49,7 @@ const Bignum BN_ZERO = {
     .capacity = 1
 };
 
-const Bignum BN_ONE = {
+const Bignum* BN_ONE = &(const Bignum){
     .base = BN_BASE_DEFAULT,
     .signbit = 0,
     .digits_end = (bn_digit_t[1]){1},
@@ -57,15 +57,17 @@ const Bignum BN_ONE = {
     .capacity = 1
 };
 
+// constructors and io
+
 bool bn_write(Bignum* b, const char* str) {
     return bni_write_str(b, str, strlen(str), BN_BASE_DEFAULT);
 }
 
-bool bn_write2(Bignum* b, const char* str, uint8_t base) {
+bool bn_write2(Bignum* b, const char* str, bn_base_t base) {
     return bni_write_str(b, str, strlen(str), base);
 }
 
-bool bn_write3(Bignum* b, const char* str, size_t len, uint8_t base) {
+bool bn_write3(Bignum* b, const char* str, size_t len, bn_base_t base) {
     return bni_write_str(b, str, len, base);
 }
 
@@ -73,62 +75,36 @@ void bn_copy(Bignum* dest, const Bignum* src) {
     bni_copy(dest, src);
 }
 
-bool bn_convert(Bignum* dest, const Bignum* src, uint8_t new_base) {
+bool bn_convert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
     if (!bnu_base_valid(new_base)) {
         return false;
     }
 
     if (src->base == new_base) {
         bni_copy(dest, src);
-    } else {
-        bni_convert(dest, src, new_base);
+        return true;
     }
 
+    // special case: convert to a greater base?
+
+    uint32_t rb_old = BN_BASE[src->base].real_base;
+    uint32_t rb_new = BN_BASE[new_base].real_base;
+
+    if (rb_new < rb_old) {
+        bni_lconvert(dest, src, new_base);
+        return true;
+    }
+
+    bni_lconvert(dest, src, new_base);
     return true;
 }
 
-size_t bn_print(const Bignum* b, bool print_base, bool use_uppercase) {
-    if (b->digits_end == NULL || b->capacity == 0) {
-        fputs("(null)", stdout);
-        return 6;
-    }
+size_t bn_print(const Bignum* b) {
+    return bni_print(b, b->base != BN_BASE_DEFAULT, BN_PRINT_LOWERCASE);
+}
 
-    if (bn_equals_zero(b)) {
-        fputs("0", stdout);
-        return 1;
-    }
-
-    // number of characters printed
-    size_t nc = 0;
-
-    if (b->signbit) {
-        fputs("-", stdout);
-        nc += 1;
-    }
-
-    // print leading digit without leading 0s
-    nc += bnu_print_digit(b->digits_end[b->msd_pos], b->base,
-        false, use_uppercase);
-
-    // does it only have 1 digit?
-    if (b->msd_pos == 0) {
-        if (print_base) {
-            nc += printf("_%u", b->base);
-        }
-        return nc;
-    }
-
-    // print remaining digits with leading 0s
-    for (size_t i = b->msd_pos-1; &b->digits_end[i] >= b->digits_end; i--) {
-        nc += bnu_print_digit(b->digits_end[i], b->base,
-            true, use_uppercase);
-    }
-
-    if (print_base) {
-        nc += printf("_%u", b->base);
-    }
-
-    return nc;
+size_t bn_print2(const Bignum* b, bool explicit_base, bool use_uppercase) {
+    return bni_print(b, explicit_base, use_uppercase);
 }
 
 // comparison
@@ -149,50 +125,23 @@ int bn_cmp(const Bignum* a0, const Bignum* a1) {
         return 0;
     }
 
-    if (a0->signbit && !a1->signbit) {
-        return -1; // a0 < 0 < a1
-    } else if (!a0->signbit && a1->signbit) {
-        return 1; // a1 < 0 < a0
-    }
-
-    // a0, a1 have same sign
-    int sign = a0->signbit ? -1 : 1;
-
-    // compare real lengths, accounting for where start is not just capacity
-    size_t len0 = bni_real_len(a0);
-    size_t len1 = bni_real_len(a1);
-    if (len0 > len1) {
-        return sign * 1;
-    } else if (len0 < len1) {
-        return sign * -1;
-    }
-
-    // compare digitwise MSD -> LSD
-    for (size_t i = a0->msd_pos; &a0->digits_end[i] >= a0->digits_end; i--) {
-        if (a0->digits_end[i] > a1->digits_end[i]) {
-            return sign * 1;
-        } else if (a0->digits_end[i] < a1->digits_end[i]) {
-            return sign * -1;
-        }
-    }
-
-    // all digits are equal
-    return 0;
+    return bni_cmp_NxM(a0, a1);
 }
 
 // operations
+// anything with "=>" is a shortcut, normalization, or optimization
 
 void bn_neg(Bignum* result, const Bignum* a0) {
 
     Bignum arg0 = *a0;
 
-    // -0 = 0
+    // -0 => 0
     if (bn_equals_zero(&arg0)) {
         bni_copy(result, &arg0);
         return;
     }
 
-    // -a0
+    // compute -a0
     bni_neg(result, &arg0);
 }
 
@@ -201,13 +150,13 @@ void bn_add(Bignum* result, const Bignum* a0, const Bignum* a1) {
     Bignum arg0 = *a0;
     Bignum arg1 = *a1;
 
-    // 0 + a1 = a1
+    // 0 + a1 => a1
     if (bn_equals_zero(&arg0)) {
         bni_copy(result, &arg1);
         return;
     }
 
-    // a0 + 0 = a0
+    // a0 + 0 => a0
     if (bn_equals_zero(&arg1)) {
         bni_copy(result, &arg0);
         return;
@@ -236,7 +185,7 @@ void bn_add(Bignum* result, const Bignum* a0, const Bignum* a1) {
         return;
     }
 
-    // a0 + a1
+    // compute a0 + a1
     bni_add(result, &arg0, &arg1);
 }
 
@@ -245,14 +194,14 @@ void bn_sub(Bignum* result, const Bignum* a0, const Bignum* a1) {
     Bignum arg0 = *a0;
     Bignum arg1 = *a1;
 
-    // 0 - a1 = -a1
+    // 0 - a1 => -a1
     if (bn_equals_zero(&arg0)) {
         bni_copy(result, &arg1);
         result->signbit = !result->signbit;
         return;
     }
 
-    // a0 - 0 = a0
+    // a0 - 0 => a0
     if (bn_equals_zero(&arg1)) {
         bni_copy(result, &arg0);
         return;
@@ -260,7 +209,7 @@ void bn_sub(Bignum* result, const Bignum* a0, const Bignum* a1) {
 
     int cmp = bn_cmp(&arg0, &arg1);
 
-    // a0 - a0 = 0
+    // a0 - a0 => 0
     if (cmp == 0) {
         bni_write_parts1(result, 0, 0, BN_BASE_DEFAULT);
         return;
@@ -289,7 +238,7 @@ void bn_sub(Bignum* result, const Bignum* a0, const Bignum* a1) {
         return;
     }
 
-    // a0 - a1
+    // compute a0 - a1
     bni_sub(result, &arg0, &arg1);
 }
 
@@ -298,12 +247,14 @@ void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
     Bignum arg0 = *a0;
     Bignum arg1 = *a1;
 
+    // a0 * 0 => 0
+    // 0 * a1 => 0
     if (bn_equals_zero(&arg0) || bn_equals_zero(&arg1)) {
         bni_write_parts1(result, 0, 0, BN_BASE_DEFAULT);
         return;
     }
 
-    // (-a0) * a1 = -(a0 * a1)
+    // (-a0) * a1 => -(a0 * a1)
     if (arg0.signbit && !arg1.signbit) {
         arg0.signbit = 0;
         bni_mul(result, &arg0, &arg1);
@@ -311,7 +262,7 @@ void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
         return;
     }
 
-    // a0 * (-a1) = -(a0 * a1)
+    // a0 * (-a1) => -(a0 * a1)
     if (!arg0.signbit && arg1.signbit) {
         arg1.signbit = 0;
         bni_mul(result, &arg0, &arg1);
@@ -319,7 +270,7 @@ void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
         return;
     }
 
-    // (-a0) * (-a1) = a0 * a1
+    // (-a0) * (-a1) => a0 * a1
     if (arg0.signbit && arg1.signbit) {
         arg0.signbit = 0;
         arg1.signbit = 0;
@@ -327,7 +278,7 @@ void bn_mul(Bignum* result, const Bignum* a0, const Bignum* a1) {
         return;
     }
 
-    // a0 * a1
+    // compute a0 * a1
     bni_mul(result, a0, a1);
 }
 
@@ -339,13 +290,13 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
     Bignum arg0 = *a0;
     Bignum arg1 = *a1;
 
-    // divmod(a0, 0) = divide/mod by zero error
+    // divmod(a0, 0) => divide/mod by zero error
     if (bn_equals_zero(&arg1)) {
         return false;
     }
 
-    // divmod(0, a0) = [0, 0]
-    if (bni_cmp_Nx1(&arg0, 0) == 0) {
+    // divmod(0, a1) => [0, 0]
+    if (bn_equals_zero(&arg0)) {
         if (result_div != NULL) {
             bni_write_parts1(result_div, 0, 0, arg0.base);
         }
@@ -355,7 +306,7 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
         return true;
     }
 
-    // divmod(a0, 1) = [a0, 0]
+    // divmod(a0, 1) => [a0, 0]
     if (bni_cmp_Nx1(&arg1, 1) == 0) {
         if (result_div != NULL) {
             bni_copy(result_div, &arg0);
@@ -366,8 +317,21 @@ bool bn_divmod(Bignum* result_div, Bignum* result_mod,
         return true;
     }
 
-    // divmod(a0, a0) = [1, 0]
-    if (bn_cmp(&arg0, &arg1) == 0) {
+    int cmp = bn_cmp(&arg0, &arg1);
+
+    // a0 < a1 => [0, a0]
+    if (cmp == -1) {
+        if (result_div != NULL) {
+            bni_write_parts1(result_div, 0, 0, arg0.base);
+        }
+        if (result_mod != NULL) {
+            bni_copy(result_mod, &arg0);
+        }
+        return true;
+    }
+
+    // a0 == a1 => [1, 0]
+    if (cmp == 0) {
         if (result_div != NULL) {
             bni_write_parts1(result_div, 0, 1, arg0.base);
         }
@@ -396,7 +360,7 @@ bool bni_is_valid(const Bignum* b) {
     return b != NULL && b->digits_end != NULL;
 }
 
-void bni_freealloc(Bignum* out, size_t n_digits, uint8_t base) {
+void bni_freealloc(Bignum* out, size_t n_digits, bn_base_t base) {
     bni_try_free(out);
     *out = (Bignum){
         .digits_end = BN_MALLOC(n_digits * sizeof(bn_digit_t)),
@@ -444,7 +408,7 @@ void bni_copy(Bignum* dest, const Bignum* src) {
     bni_normalize(dest);
 }
 
-void bni_convert(Bignum* dest, const Bignum* src, uint8_t new_base) {
+void bni_lconvert(Bignum* dest, const Bignum* src, bn_base_t new_base) {
 
     bn_digit_t real_base = BN_BASE[new_base].real_base;
 
@@ -509,7 +473,7 @@ void bni_normalize(Bignum* out) {
     }
 }
 
-bool bni_write_str(Bignum* out, const char* str, size_t len, uint8_t base) {
+bool bni_write_str(Bignum* out, const char* str, size_t len, bn_base_t base) {
 
     if (!bnu_base_valid(base) || str == NULL || len == 0) {
         return false;
@@ -601,7 +565,7 @@ bool bni_write_str(Bignum* out, const char* str, size_t len, uint8_t base) {
 bool bni_write_parts1(Bignum* out,
                       uint8_t signbit,
                       bn_digit_t d0,
-                      uint8_t base)
+                      bn_base_t base)
 {
     if (!bnu_digit_in_range(d0, base)) {
         return false;
@@ -618,7 +582,7 @@ bool bni_write_parts1(Bignum* out,
 bool bni_write_parts2(Bignum* out,
                       uint8_t signbit,
                       bn_digit_t d0, bn_digit_t d1,
-                      uint8_t base)
+                      bn_base_t base)
 {
     if (!bnu_digit_in_range(d0, base)
     || !bnu_digit_in_range(d1, base)) {
@@ -632,6 +596,50 @@ bool bni_write_parts2(Bignum* out,
     bni_normalize(out);
     return true;
 
+}
+
+size_t bni_print(const Bignum* b, bool explicit_base, bool use_uppercase) {
+    if (b->digits_end == NULL || b->capacity == 0) {
+        fputs("(null)", stdout);
+        return 6;
+    }
+
+    if (bn_equals_zero(b)) {
+        fputs("0", stdout);
+        return 1;
+    }
+
+    // number of characters printed
+    size_t nc = 0;
+
+    if (b->signbit) {
+        fputs("-", stdout);
+        nc += 1;
+    }
+
+    // print leading digit without leading 0s
+    nc += bnu_print_digit(b->digits_end[b->msd_pos], b->base,
+        false, use_uppercase);
+
+    // does it only have 1 digit?
+    if (b->msd_pos == 0) {
+        if (explicit_base) {
+            nc += printf("_%u", b->base);
+        }
+        return nc;
+    }
+
+    // print remaining digits with leading 0s
+    for (size_t i = b->msd_pos-1; &b->digits_end[i] >= b->digits_end; i--) {
+        nc += bnu_print_digit(b->digits_end[i], b->base,
+            true, use_uppercase);
+    }
+
+    if (explicit_base) {
+        nc += printf("_%u", b->base);
+    }
+
+    return nc;
 }
 
 void bni_dump(const Bignum* b) {
@@ -678,6 +686,38 @@ int bni_cmp_Nx1(const Bignum* a0, bn_digit_t a1) {
     if (bni_real_len(a0) > 1) return 1;
     if (a0->digits_end[0] > a1) return 1;
     if (a0->digits_end[0] < a1) return -1;
+    return 0;
+}
+
+int bni_cmp_NxM(const Bignum* a0, const Bignum* a1) {
+    if (a0->signbit && !a1->signbit) {
+        return -1; // a0 < 0 < a1
+    } else if (!a0->signbit && a1->signbit) {
+        return 1; // a1 < 0 < a0
+    }
+
+    // a0, a1 have same sign
+    int sign = a0->signbit ? -1 : 1;
+
+    // compare real lengths, accounting for where start is not just capacity
+    size_t len0 = bni_real_len(a0);
+    size_t len1 = bni_real_len(a1);
+    if (len0 > len1) {
+        return sign * 1;
+    } else if (len0 < len1) {
+        return sign * -1;
+    }
+
+    // compare digitwise MSD -> LSD
+    for (size_t i = a0->msd_pos; &a0->digits_end[i] >= a0->digits_end; i--) {
+        if (a0->digits_end[i] > a1->digits_end[i]) {
+            return sign * 1;
+        } else if (a0->digits_end[i] < a1->digits_end[i]) {
+            return sign * -1;
+        }
+    }
+
+    // all digits are equal
     return 0;
 }
 
@@ -931,13 +971,13 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
         bni_freealloc(&r_result, 1, a0->base);
     }
 
-    if (q_result.capacity == 2) {
+    if (bni_real_len(a0) == 1) {
         // 1x1
         bnu_divqr_1x1(a0->digits_end[0],
                       a1,
                       !!q_out ? &q_result.digits_end[0] : NULL,
                       !!r_out ? &r_result.digits_end[0] : NULL);
-    } else if (q_result.capacity == 3) {
+    } else if (bni_real_len(a0) == 2) {
         // 2x1
         bnu_divqr_2x1(a0->digits_end[1], a0->digits_end[0],
                     a1,
@@ -963,9 +1003,6 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
 
         // final result: {q_0}{q_1}{q_2}...{q_n} R {r_n}
 
-        // bni_dump(a0);
-        // bni_dump(&arg0);
-
         // start of loop
         int64_t i = a0->msd_pos;
 
@@ -979,10 +1016,10 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
         while (i >= 0) {
 
             // ctd = {r_n-1}{d_n}
-            // ctd.digits_end[0] = cr;
-            // ctd.digits_end[1] = arg0.digits_end[i];
-            // ctd.msd_pos = 1;
-            bni_write_parts2(&ctd, 0, cr, arg0.digits_end[i], arg0.base);
+            // bni_write_parts2(&ctd, 0, cr, arg0.digits_end[i], arg0.base);
+            ctd.digits_end[1] = cr;
+            ctd.digits_end[0] = arg0.digits_end[i];
+            ctd.msd_pos = 1;
 
             // get q_n and r_n
             bnu_divqr_2x1(ctd.digits_end[1], ctd.digits_end[0],
@@ -990,13 +1027,8 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
                             arg0.base,
                             &cq0, &cq1,
                             &cr);
-            // printf("digit %"PRIu64" - ctd=[%"PRIu32",%"PRIu32"],"
-            //     "cq=[%"PRIu32",%"PRIu32"], cr=%"PRIu32"\n",
-            //         i, ctd.digits_end[0], ctd.digits_end[1],
-            //        cq0, cq1, cr);
 
             // append to quotient
-            // cq0 guaranteed to be 0?
             if (q_out != NULL) {
                 q_result.digits_end[i] = cq1;
             }
@@ -1007,6 +1039,102 @@ void bni_divqr_Nx1(Bignum* q_out, Bignum* r_out,
         // final remainder
         if (r_out != NULL) {
             r_result.digits_end[0] = cr;
+        }
+    }
+
+    // return result
+    if (q_out != NULL) {
+        bni_try_free(q_out);
+        *q_out = q_result;
+        bni_normalize(q_out);
+    }
+    if (r_out != NULL) {
+        bni_try_free(r_out);
+        *r_out = r_result;
+        bni_normalize(r_out);
+    }
+}
+
+void bni_divqr_Nx2(Bignum* q_out, Bignum* r_out,
+                const Bignum* a0,
+                const Bignum* a1)
+{
+    // naive algorithm - optimize later
+
+    Bignum q_result = {0};
+    if (q_out != NULL) {
+        bni_freealloc(&q_result, bni_real_len(a0) + 1, a0->base);
+    }
+
+    // remainder is 1 or 2 digits
+    Bignum r_result = {0};
+    if (r_out != NULL) {
+        bni_freealloc(&r_result, 2, a0->base);
+    }
+
+    // a0 guaranteed to be at least 2 digits
+    // a1 guaranteed to be exactly 2 digits
+
+    if (bni_real_len(a0) == 2) {
+        // 2x2
+        bnu_divqr_2x2(a0->digits_end[1], a0->digits_end[0],
+                    a1->digits_end[1], a1->digits_end[0],
+                    a0->base,
+                    !!q_out ? &q_result.digits_end[1] : NULL,
+                    !!q_out ? &q_result.digits_end[0] : NULL,
+                    !!r_out ? &r_result.digits_end[1] : NULL,
+                    !!r_out ? &r_result.digits_end[0] : NULL);
+    } else {
+        // 3x2 or more - do it in 2x2 steps
+
+        // prepend with a zero
+        Bignum arg0 = {0};
+        bni_copy(&arg0, a0);
+        bni_append_zeros(&arg0, 1);
+
+        // {d_0}{d_1}{d_2}...{d_n} /% D
+        // take 2 digits at a time:
+
+        // q_0 = {0}{d_0} // D
+        // r_0 = {0}{d_0} % D
+        // q_n = {r_n-1}{d_n} // D
+        // r_n = {r_n-1}{d_n} % D
+
+        // final result: {q_0}{q_1}{q_2}...{q_n} R {r_n}
+
+        // start of loop
+        int64_t i = arg0.msd_pos;
+
+        // current quotient and remainder
+        uint64_t cq, cr = 0;
+        bn_digit_t real_base = BN_BASE[arg0.base].real_base;
+
+        // current two digits packed into a u64
+        uint64_t ctd;
+
+        while (i >= 0) {
+
+            // ctd = {r_n-1}{d_n}
+            ctd = (cr * real_base) + arg0.digits_end[i];
+
+            // manually 2x2 divide to get q_n and r_n
+
+            uint64_t packed_a1 = (a1->digits_end[1] * real_base)
+                + (a1->digits_end[0]);
+            cq = ctd / packed_a1;
+            cr = ctd % packed_a1;
+
+            // append to quotient
+            if (q_out != NULL) {
+                q_result.digits_end[i] = cq / real_base;
+            }
+
+            i -= 1;
+        }
+
+        // final remainder
+        if (r_out != NULL) {
+            r_result.digits_end[0] = cr % real_base;
         }
     }
 
@@ -1040,6 +1168,19 @@ char* bnu_strndup(const char* str, size_t n) {
     return dup;
 }
 
+uint64_t bnu_pack(bn_digit_t x0, bn_digit_t x1, bn_digit_t real_base) {
+    uint64_t result = (x0 * real_base) + x1;
+    return result;
+}
+
+void bnu_unpack(uint64_t x0x1, bn_digit_t real_base,
+                bn_digit_t* x0_out,
+                bn_digit_t* x1_out)
+{
+    *x0_out = x0x1 / real_base;
+    *x1_out = x0x1 % real_base;
+}
+
 void bnu_divqr_1x1(bn_digit_t x,
                     bn_digit_t y,
                     bn_digit_t* q_out, bn_digit_t* r_out)
@@ -1055,7 +1196,7 @@ void bnu_divqr_1x1(bn_digit_t x,
 
 void bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
                     bn_digit_t y,
-                    uint8_t base,
+                    bn_base_t base,
                     bn_digit_t* q0_out, bn_digit_t* q1_out,
                     bn_digit_t* r_out)
 {
@@ -1079,12 +1220,43 @@ void bnu_divqr_2x1(bn_digit_t x0, bn_digit_t x1,
     }
 }
 
+void bnu_divqr_2x2(bn_digit_t x0, bn_digit_t x1,
+                    bn_digit_t y0, bn_digit_t y1,
+                    bn_base_t base,
+                    bn_digit_t* q0_out, bn_digit_t* q1_out,
+                    bn_digit_t* r0_out, bn_digit_t* r1_out)
+{
+
+    uint64_t x0_64 = x0;
+    uint64_t x1_64 = x1;
+    uint64_t y0_64 = y0;
+    uint64_t y1_64 = y1;
+    uint64_t real_base_64 = BN_BASE[base].real_base;
+
+    // pack 2-digit bignums into u64
+    uint64_t x_64 = (x0_64 * real_base_64) + x1_64;
+    uint64_t y_64 = (y0_64 * real_base_64) + y1_64;
+
+    // split quotient
+    if (q0_out != NULL && q1_out != NULL) {
+        uint64_t quotient = x_64 / y_64;
+        *q0_out = quotient / real_base_64;
+        *q1_out = quotient % real_base_64;
+    }
+    // split remainder
+    if (r0_out != NULL && r1_out != NULL) {
+        uint64_t remainder = x_64 % y_64;
+        *r0_out = remainder / real_base_64;
+        *r1_out = remainder % real_base_64;
+    }
+}
+
 // false => conversion error
 // out = u32(str[start:end], base)
 bool bnu_parse_digit(const char* str,
                     size_t start,
                     size_t end,
-                    uint8_t base,
+                    bn_base_t base,
                     bn_digit_t* out)
 {
 
@@ -1113,7 +1285,7 @@ bool bnu_parse_digit(const char* str,
 }
 
 size_t bnu_print_digit(bn_digit_t digit_value,
-                         uint8_t base,
+                         bn_base_t base,
                          bool print_leading_zeroes,
                          bool use_uppercase_digits)
 {
@@ -1147,11 +1319,11 @@ size_t bnu_print_digit(bn_digit_t digit_value,
     return nc;
 }
 
-bool bnu_digit_in_range(bn_digit_t digit, uint8_t base) {
+bool bnu_digit_in_range(bn_digit_t digit, bn_base_t base) {
     return digit < BN_BASE[base].real_base;
 }
 
-bool bnu_digit_valid(char digit, uint8_t base, bn_digit_t* out) {
+bool bnu_digit_valid(char digit, bn_base_t base, bn_digit_t* out) {
     if (base < BN_BASE_MIN || base > BN_BASE_MAX) {
         return false;
     }
@@ -1172,6 +1344,6 @@ bool bnu_digit_valid(char digit, uint8_t base, bn_digit_t* out) {
     return false;
 }
 
-bool bnu_base_valid(uint8_t base) {
+bool bnu_base_valid(bn_base_t base) {
     return BN_BASE_MIN <= base && base <= BN_BASE_MAX;
 }
